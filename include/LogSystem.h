@@ -1,0 +1,588 @@
+#pragma once
+
+#include "Config.h"
+#include "Helper.h"
+#include "LogQue.h"
+#include "Singleton.h"
+
+#include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <mutex>
+#include <ostream>
+#include <utility>
+
+// 日志调用宏
+#define LOG_DEBUG(...) lyf::AsyncLogSystem::GetInstance().Debug(__VA_ARGS__)
+#define LOG_INFO(...) lyf::AsyncLogSystem::GetInstance().Info(__VA_ARGS__)
+#define LOG_WARN(...) lyf::AsyncLogSystem::GetInstance().Warn(__VA_ARGS__)
+#define LOG_ERROR(...) lyf::AsyncLogSystem::GetInstance().Error(__VA_ARGS__)
+#define LOG_FATAL(...) lyf::AsyncLogSystem::GetInstance().Fatal(__VA_ARGS__)
+
+namespace lyf {
+using steady_clock = std::chrono::steady_clock;
+using std::unique_ptr, std::make_unique;
+
+class AsyncLogSystem : public Singleton<AsyncLogSystem> {
+  friend class Singleton<AsyncLogSystem>;
+
+public:
+private:
+  AsyncLogSystem() : config_(Config::GetInstance()) { Init(); }
+
+public:
+  void Init() {
+    // 还在运行, 不初始化
+    if (!isStop_.exchange(false)) {
+      return;
+    }
+    consoleQue_ = make_unique<LogQueue>(config_.basic.maxConsoleLogQueueSize);
+    fileQue_ = make_unique<LogQueue>(config_.basic.maxFileLogQueueSize);
+    rotationType_ = RotationType::BY_SIZE_AND_TIME;
+    lastFileFlushTime_ = std::chrono::steady_clock::now();
+
+    if (config_.output.toFile) {
+      if (initializeLogFile()) {
+        std::cout << "Log system initialized. Current log file: "
+                  << currentLogFilePath_ << std::endl;
+      } else {
+        std::cerr << "Failed to initialize log file." << std::endl;
+        config_.output.toFile = false;
+      }
+    }
+
+    // 启动控制台输出线程
+    if (config_.output.toConsole) {
+      consoleWorker_ = thread(&AsyncLogSystem::ConsoleWorkerLoop, this);
+    }
+    // 启动文件输出线程
+    if (config_.output.toFile) {
+      fileWorker_ = thread(&AsyncLogSystem::FileWorkerLoop, this);
+    }
+  }
+
+  ~AsyncLogSystem() noexcept { Stop(); }
+
+public:
+  template <typename... Args>
+  void Log(LogLevel level, const string &fmt, Args &&...args) {
+    if (isStop_ || static_cast<int>(level) < config_.output.minLogLevel) {
+      return;
+    }
+    auto msg =
+        LogMessage(level, FormatMessage(fmt, std::forward<Args>(args)...));
+
+    // 分发到不同对列
+    if (config_.output.toConsole) {
+      consoleQue_->Push(LogMessage(msg)); // 复制一份给控制台
+    }
+    if (config_.output.toFile) {
+      fileQue_->Push(std::move(msg)); // 直接移动给文件队列,提高性能
+    }
+  }
+
+  // 停止日志系统
+  inline void Stop() {
+    bool expected = false;
+    if (!isStop_.compare_exchange_strong(expected, true)) {
+      return;
+    }
+
+    consoleQue_->Stop();
+    fileQue_->Stop();
+
+    // 等待工作线程完成
+    if (consoleWorker_.joinable()) {
+      consoleWorker_.join();
+    }
+    if (fileWorker_.joinable()) {
+      fileWorker_.join();
+    }
+
+    // 最终flush
+    if (config_.output.toFile) {
+      lock_guard<mutex> lock(fileMtx_);
+      if (logFile_.is_open()) {
+        logFile_.flush();
+        logFile_.close();
+      }
+    }
+    // 输出系统关闭信息到控制台
+    if (config_.output.toConsole) {
+      // 红色字体
+      std::cout << "\033[1;31m"
+                << "[" << getCurrentTime() << "] [SYSTEM] Log system closed."
+                << "\033[0m" << std::endl;
+    }
+  }
+
+  // 刷新日志文件
+  inline void Flush() {
+    if (config_.output.toConsole) {
+      std::cout.flush();
+    }
+
+    // 刷新日志文件
+    if (config_.output.toFile) {
+      lock_guard<mutex> lock(fileMtx_);
+      if (logFile_.is_open()) {
+        logFile_.flush();
+      }
+    }
+  }
+
+  // 便捷操作
+  template <typename... Args>
+  inline void Debug(const string &fmt, Args &&...args) {
+    Log(LogLevel::DEBUG, fmt, std::forward<Args>(args)...);
+  }
+
+  template <typename... Args>
+  inline void Info(const string &fmt, Args &&...args) {
+    Log(LogLevel::INFO, fmt, std::forward<Args>(args)...);
+  }
+
+  template <typename... Args>
+  inline void Warn(const string &fmt, Args &&...args) {
+    Log(LogLevel::WARN, fmt, std::forward<Args>(args)...);
+  }
+
+  template <typename... Args>
+  inline void Error(const string &fmt, Args &&...args) {
+    Log(LogLevel::ERROR, fmt, std::forward<Args>(args)...);
+  }
+
+  template <typename... Args>
+  inline void Fatal(const string &fmt, Args &&...args) {
+    Log(LogLevel::FATAL, fmt, std::forward<Args>(args)...);
+  }
+
+  string getCurrentLogFilePath() const {
+    // 获取完整的绝对路径
+    return currentLogFilePath_;
+  }
+
+  // 设置轮转参数的接口
+  void setRotationType(RotationType type) { rotationType_ = type; }
+
+  void setMaxFileSize(size_t maxSize) {
+    config_.rotation.maxFileSize = maxSize;
+  }
+
+  void setMaxFileCount(int maxCount) {
+    config_.rotation.maxFileCount = maxCount;
+  }
+
+  // 手动触发轮转
+  void forceRotation() {
+    if (rotateLogFile()) {
+      std::cout << "Manual log rotation completed. New file: "
+                << currentLogFilePath_ << std::endl;
+    }
+  }
+
+  // 获取日志目录中的所有日志文件
+  std::vector<std::string> getLogFiles() const {
+    std::vector<std::string> files;
+    try {
+      for (const auto &entry :
+           std::filesystem::directory_iterator(config_.output.logRootDir)) {
+        if (entry.is_regular_file()) {
+          std::string filename = entry.path().filename().string();
+          if (filename.starts_with("log_") && filename.ends_with(".txt")) {
+            files.push_back(entry.path().string());
+          }
+        }
+      }
+
+      // 按文件名排序
+      std::sort(files.begin(), files.end());
+    } catch (const std::exception &e) {
+      std::cerr << "Error listing log files: " << e.what() << std::endl;
+    }
+    return files;
+  }
+
+  // 生成新的日志文件名
+  std::string generateLogFileName() const {
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << "log_" << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S")
+       << ".txt";
+    return (std::filesystem::path(config_.output.logRootDir) / ss.str())
+        .string();
+  }
+
+  // 生成按日期的日志文件名 (用于按时间轮转)
+  std::string generateDailyLogFileName(const std::string &date = "") const {
+    std::string dateStr = date;
+    if (dateStr.empty()) {
+      auto now = std::chrono::system_clock::now();
+      auto time_t = std::chrono::system_clock::to_time_t(now);
+      std::stringstream ss;
+      ss << std::put_time(std::localtime(&time_t), "%Y%m%d");
+      dateStr = ss.str();
+    }
+    return (std::filesystem::path(config_.output.logRootDir) /
+            ("log_" + dateStr + ".txt"))
+        .string();
+  }
+
+  // 初始化日志文件
+  bool initializeLogFile() {
+    try {
+      // 创建日志目录
+      if (!std::filesystem::exists(config_.output.logRootDir)) {
+        std::filesystem::create_directories(config_.output.logRootDir);
+        std::cout << "Created log directory: " << config_.output.logRootDir
+                  << std::endl;
+      }
+      // 根据轮转类型生成文件名
+      if (rotationType_ == RotationType::BY_TIME ||
+          rotationType_ == RotationType::BY_SIZE_AND_TIME) {
+        currentLogFilePath_ = generateDailyLogFileName();
+        lastRotationDate_ = getCurrentTime("%Y%m%d");
+      } else {
+        currentLogFilePath_ = generateLogFileName();
+      }
+      // 打开日志文件
+      logFile_.open(currentLogFilePath_, std::ios::app | std::ios::out);
+      if (!logFile_.is_open()) {
+        std::cerr << "Failed to open log file: " << currentLogFilePath_
+                  << std::endl;
+        return false;
+      }
+      // 写入启动信息
+      logFile_ << "[" << getCurrentTime()
+               << "] [SYSTEM] Log system started. File: " << currentLogFilePath_
+               << std::endl;
+      logFile_.flush();
+      return true;
+    } catch (const std::exception &e) {
+      std::cerr << "Error initializing log file: " << e.what() << std::endl;
+      return false;
+    }
+  }
+
+  // 检查是否需要轮转
+  bool needsRotation() {
+    if (!config_.output.toFile || !logFile_.is_open()) {
+      return false;
+    }
+    try {
+      bool needRotation = false;
+      // 检查文件大小
+      if (rotationType_ == RotationType::BY_SIZE ||
+          rotationType_ == RotationType::BY_SIZE_AND_TIME) {
+        auto fileSize = std::filesystem::file_size(currentLogFilePath_);
+        if (fileSize >= config_.rotation.maxFileSize) {
+          needRotation = true;
+        }
+      }
+      // 检查日期变化
+      if (rotationType_ == RotationType::BY_TIME ||
+          rotationType_ == RotationType::BY_SIZE_AND_TIME) {
+        std::string currentDate = getCurrentTime("%Y%m%d");
+        if (currentDate != lastRotationDate_) {
+          needRotation = true;
+        }
+      }
+      return needRotation;
+    } catch (const std::exception &e) {
+      std::cerr << "Error checking rotation needs: " << e.what() << std::endl;
+      return false;
+    }
+  }
+
+  // 执行日志轮转
+  bool rotateLogFile() {
+    if (!config_.output.toFile) {
+      return true;
+    }
+    // 使用原子标志避免重复轮转
+    bool expected = false;
+    if (!isRotating_.compare_exchange_strong(expected, true)) {
+      return false; // 已经在轮转中
+    }
+    FlagGuard guard(isRotating_);
+
+    try {
+      std::lock_guard<std::mutex> lock(fileMtx_);
+      // 写入轮转信息到当前文件
+      if (logFile_.is_open()) {
+        logFile_ << "[" << getCurrentTime()
+                 << "] [SYSTEM] Log rotation triggered." << std::endl;
+        logFile_.close();
+      }
+      // 生成新的日志文件名
+      std::string newLogFile;
+      if (rotationType_ == RotationType::BY_TIME ||
+          rotationType_ == RotationType::BY_SIZE_AND_TIME) {
+        std::string currentDate = getCurrentTime("%Y%m%d");
+        if (currentDate != lastRotationDate_) {
+          // 按日期轮转
+          newLogFile = generateDailyLogFileName(currentDate);
+          lastRotationDate_ = currentDate;
+        } else {
+          // 同一天内按大小轮转，添加序号
+          newLogFile = generateLogFileName();
+        }
+      } else {
+        newLogFile = generateLogFileName();
+      }
+
+      currentLogFilePath_ = newLogFile;
+      // 打开新的日志文件
+      logFile_.open(currentLogFilePath_, std::ios::app | std::ios::out);
+      if (!logFile_.is_open()) {
+        std::cerr << "Failed to open new log file: " << currentLogFilePath_
+                  << std::endl;
+        return false;
+      }
+      // 写入新文件启动信息
+      logFile_ << "[" << getCurrentTime()
+               << "] [SYSTEM] New log file created after rotation."
+               << std::endl;
+      logFile_.flush();
+      // 清理旧日志文件
+      cleanupOldLogFiles();
+      return true;
+    } catch (const std::exception &e) {
+      std::cerr << "Error during log rotation: " << e.what() << std::endl;
+      return false;
+    }
+  }
+
+  // 清理旧的日志文件
+  void cleanupOldLogFiles() {
+    try {
+      std::vector<std::filesystem::path> logFiles;
+      // 收集所有日志文件
+      for (const auto &entry :
+           std::filesystem::directory_iterator(config_.output.logRootDir)) {
+        if (entry.is_regular_file()) {
+          std::string filename = entry.path().filename().string();
+          if (filename.starts_with("log_") && filename.ends_with(".txt")) {
+            logFiles.push_back(entry.path());
+          }
+        }
+      }
+      // 按修改时间排序（最新的在前）
+      std::sort(logFiles.begin(), logFiles.end(),
+                [](const auto &a, const auto &b) {
+                  return std::filesystem::last_write_time(a) >
+                         std::filesystem::last_write_time(b);
+                });
+      // 删除超出数量限制的文件
+      for (size_t i = config_.rotation.maxFileCount; i < logFiles.size(); ++i) {
+        try {
+          std::filesystem::remove(logFiles[i]);
+          std::cout << "Removed old log file: " << logFiles[i] << std::endl;
+        } catch (const std::exception &e) {
+          std::cerr << "Failed to remove old log file " << logFiles[i] << ": "
+                    << e.what() << std::endl;
+        }
+      }
+    } catch (const std::exception &e) {
+      std::cerr << "Error during log cleanup: " << e.what() << std::endl;
+    }
+  }
+
+private:
+  inline string LevelToString(LogLevel level) {
+    switch (level) {
+    case LogLevel::DEBUG:
+      return "DEBUG";
+    case LogLevel::INFO:
+      return "INFO ";
+    case LogLevel::WARN:
+      return "WARN ";
+    case LogLevel::ERROR:
+      return "ERROR";
+    case LogLevel::FATAL:
+      return "FATAL";
+    default:
+      return "UNKNOWN";
+    }
+  }
+
+  inline string LevelColor(LogLevel level) {
+    switch (level) {
+    case LogLevel::DEBUG:
+      return "\033[0;37m"; // 白色
+    case LogLevel::INFO:
+      return "\033[0;32m"; // 绿色
+    case LogLevel::WARN:
+      return "\033[1;33m"; // 黄色
+    case LogLevel::ERROR:
+      return "\033[1;31m"; // 红色
+    case LogLevel::FATAL:
+      return "\033[1;35m"; // 紫色
+    default:
+      return "\033[0m"; // 默认
+    }
+  }
+
+  inline bool CreateLogDirectory(const string &path) {
+    try {
+      auto dir = std::filesystem::path(path).parent_path();
+      if (!std::filesystem::exists(dir)) {
+        std::filesystem::create_directories(dir);
+      }
+      return true;
+    } catch (const std::exception &e) {
+      std::cerr << "Failed to create log directory: " << e.what() << std::endl;
+      return false;
+    }
+  }
+
+  // 控制台输出线程
+  inline void ConsoleWorkerLoop() {
+    LogQueue::QueueType batchQueue; // 当前批次的日志消息队列
+    std::string buffer;
+    buffer.reserve(1024 * 16); // 预分配16KB缓冲区
+
+    auto work = [&]() {
+      ProcessConsoleBatch(batchQueue, buffer);
+      batchQueue = LogQueue::QueueType();
+      buffer.clear();
+    };
+
+    while (!isStop_.load(std::memory_order_relaxed)) {
+      if (consoleQue_->PopAll(batchQueue,
+                              config_.performance.consoleFlushInterval)) {
+        work();
+      }
+    }
+    // 处理剩余的日志消息
+    while (consoleQue_->PopAll(batchQueue,
+                               config_.performance.consoleFlushInterval)) {
+      work();
+    }
+  }
+
+  inline void FileWorkerLoop() {
+    LogQueue::QueueType batchQueue; // 当前批次的日志消息队列
+    std::string buffer;
+    buffer.reserve(1024 * 64); // 预分配64KB缓冲区
+
+    auto CheckMayBeRotate = [&]() {
+      if (needsRotation()) {
+        if (rotateLogFile()) {
+          std::cout << "Log rotated to: " << currentLogFilePath_ << std::endl;
+        }
+      }
+    };
+    auto work = [&]() {
+      ProcessFileBatch(batchQueue, buffer);
+      batchQueue = LogQueue::QueueType();
+      buffer.clear();
+      CheckMayBeRotate();
+    };
+
+    while (!isStop_.load(std::memory_order_relaxed)) {
+      if (fileQue_->PopAll(batchQueue, config_.performance.fileFlushInterval)) {
+        work();
+      }
+    }
+    // 处理剩余的日志消息
+    while (
+        fileQue_->PopAll(batchQueue, config_.performance.fileFlushInterval)) {
+      work();
+    }
+  }
+
+  inline void ProcessConsoleBatch(LogQueue::QueueType &batchQueue,
+                                  std::string &buffer) {
+    if (batchQueue.empty()) {
+      return;
+    }
+    size_t processedCount = 0;
+    while (!batchQueue.empty()) {
+      auto msg = std::move(batchQueue.front());
+      batchQueue.pop();
+
+      buffer += LevelColor(msg.level);
+      buffer +=
+          "[" + formatTime(msg.time) + "] [" + LevelToString(msg.level) + "] ";
+      buffer += msg.content;
+      buffer += "\033[0m\n";
+
+      ++processedCount;
+      // 按批次大小输出, 避免缓冲区过大
+      if (processedCount >= config_.performance.consoleBatchSize) {
+        if (config_.performance.enableAsyncConsole) {
+          std::cout << buffer; // 异步输出, 不立即刷新
+        } else {
+          std::cout << buffer << std::flush;
+        }
+        buffer.clear();
+        processedCount = 0;
+      }
+    }
+    // 输出剩余内容
+    if (!buffer.empty()) {
+      std::cout << buffer << std::flush;
+    }
+  }
+
+  inline void ProcessFileBatch(LogQueue::QueueType &batchQueue,
+                               std::string &buffer) {
+    if (batchQueue.empty()) {
+      return;
+    }
+    while (!batchQueue.empty()) {
+      auto msg = std::move(batchQueue.front());
+      batchQueue.pop();
+
+      buffer +=
+          "[" + formatTime(msg.time) + "] [" + LevelToString(msg.level) + "] ";
+      buffer += msg.content;
+      buffer += "\n";
+    }
+
+    // 大块写入, 定期flush
+    if (!buffer.empty()) {
+      lock_guard<mutex> lock(fileMtx_);
+      if (logFile_.is_open()) {
+        logFile_.write(buffer.data(), buffer.size());
+      }
+      // 根据文件刷新间隔配置, 决定是否立即刷新
+      auto now = std::chrono::steady_clock::now();
+
+      if (now - lastFileFlushTime_ >= config_.performance.fileFlushInterval) {
+        logFile_.flush();
+        lastFileFlushTime_ = now;
+      }
+    }
+  }
+
+private:
+  Config &config_; // 配置引用
+
+private:
+  std::ofstream logFile_;                      // 当前的日志文件输出流
+  atomic<bool> isStop_{true};                  // 是否关闭
+  mutable mutex fileMtx_;                      // 用于文件操作的互斥锁
+  steady_clock::time_point lastFileFlushTime_; // 上次文件刷新时间
+
+private:
+  thread consoleWorker_;            // 控制台输出线程
+  thread fileWorker_;               // 文件输出线程
+  unique_ptr<LogQueue> consoleQue_; // 控制台输出队列
+  unique_ptr<LogQueue> fileQue_;    // 文件输出队列
+
+private:
+  // 日志文件轮转相关
+  string currentLogFilePath_; // 当前日志文件完整路径
+  RotationType rotationType_; // 轮转类型
+  string lastRotationDate_;   // 上次轮转的日期(用于按时间轮转)
+  atomic<bool> isRotating_;   // 是否正在轮转
+
+}; // class AsyncLogSystem
+
+} // namespace lyf

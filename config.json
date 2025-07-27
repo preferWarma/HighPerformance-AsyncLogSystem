@@ -1,0 +1,23 @@
+{
+    "basic": {
+        "maxConsoleLogQueueSize": 1000,
+        "maxFileLogQueueSize": 5000
+    },
+    "output": {
+        "logRootDir": "logs",
+        "toFile": true,
+        "toConsole": true,
+        "minLogLevel": 1
+    },
+    "performance": {
+        "enableAsyncConsole": true,
+        "consoleFlushInterval_ms": 1000,
+        "fileFlushInterval_ms": 1000,
+        "consoleBatchSize": 100,
+        "fileBatchSize": 500
+    },
+    "rotation": {
+        "maxLogFileSize": 104857600,
+        "maxLogFileCount": 10
+    }
+}
