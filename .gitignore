@@ -3,3 +3,7 @@ build/
 lib/
 .cache/
 *.DS_Store
+cloud_server/.venv
+cloud_server/storage/
+cloud_server/__pycache__/
+cloud_server/instance/

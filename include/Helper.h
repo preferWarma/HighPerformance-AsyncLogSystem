@@ -1,7 +1,9 @@
 #pragma once
 
 #include <chrono>
+#include <filesystem>
 #include <iomanip>
+#include <iostream>
 #include <string>
 #include <thread>
 
@@ -91,5 +93,21 @@ public:
 private:
   std::atomic<bool> &_flag;
 };
+
+/// @brief 创建日志目录
+/// @param path 日志文件路径
+/// @return 创建成功返回true, 否则返回false
+inline bool CreateLogDirectory(const string &path) {
+  try {
+    auto dir = std::filesystem::path(path).parent_path();
+    if (!std::filesystem::exists(dir)) {
+      std::filesystem::create_directories(dir);
+    }
+    return true;
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to create log directory: " << e.what() << std::endl;
+    return false;
+  }
+}
 
 } // namespace lyf

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CloudUploader.h"
 #include "Config.h"
 #include "Helper.h"
 #include "LogQue.h"
@@ -29,7 +30,6 @@ using std::unique_ptr, std::make_unique;
 class AsyncLogSystem : public Singleton<AsyncLogSystem> {
   friend class Singleton<AsyncLogSystem>;
 
-public:
 private:
   AsyncLogSystem() : config_(Config::GetInstance()) { Init(); }
 
@@ -43,6 +43,7 @@ public:
     fileQue_ = make_unique<LogQueue>(config_.basic.maxFileLogQueueSize);
     rotationType_ = RotationType::BY_SIZE_AND_TIME;
     lastFileFlushTime_ = std::chrono::steady_clock::now();
+    rotateCounts_ = 0;
 
     if (config_.output.toFile) {
       if (initializeLogFile()) {
@@ -54,6 +55,21 @@ public:
       }
     }
 
+    if (config_.cloud.enable) {
+      cloudUploader_ = make_unique<CloudUploader>();
+      cloudUploader_->start();
+
+      if (!cloudUploader_->ping()) {
+        std::cerr << "[Cloud] Cloud upload enabled, serverUrl:"
+                  << config_.cloud.serverUrl << " is not available."
+                  << std::endl;
+        config_.cloud.enable = false;
+      } else {
+        std::cout << "[Cloud] Cloud upload enabled, serverUrl:"
+                  << config_.cloud.serverUrl << std::endl;
+      }
+    }
+
     // 启动控制台输出线程
     if (config_.output.toConsole) {
       consoleWorker_ = thread(&AsyncLogSystem::ConsoleWorkerLoop, this);
@@ -61,26 +77,6 @@ public:
     // 启动文件输出线程
     if (config_.output.toFile) {
       fileWorker_ = thread(&AsyncLogSystem::FileWorkerLoop, this);
-    }
-  }
-
-  ~AsyncLogSystem() noexcept { Stop(); }
-
-public:
-  template <typename... Args>
-  void Log(LogLevel level, const string &fmt, Args &&...args) {
-    if (isStop_ || static_cast<int>(level) < config_.output.minLogLevel) {
-      return;
-    }
-    auto msg =
-        LogMessage(level, FormatMessage(fmt, std::forward<Args>(args)...));
-
-    // 分发到不同对列
-    if (config_.output.toConsole) {
-      consoleQue_->Push(LogMessage(msg)); // 复制一份给控制台
-    }
-    if (config_.output.toFile) {
-      fileQue_->Push(std::move(msg)); // 直接移动给文件队列,提高性能
     }
   }
 
@@ -107,9 +103,21 @@ public:
       lock_guard<mutex> lock(fileMtx_);
       if (logFile_.is_open()) {
         logFile_.flush();
-        logFile_.close();
       }
     }
+    // 停止云端上传器
+    if (cloudUploader_) {
+      // 轮转过，把最新的文件上传
+      if (rotateCounts_ > 0) {
+        cloudUploader_->uploadFileSync(currentLogFilePath_);
+      }
+      cloudUploader_->stop();
+    }
+
+    if (logFile_.is_open()) {
+      logFile_.close();
+    }
+
     // 输出系统关闭信息到控制台
     if (config_.output.toConsole) {
       // 红色字体
@@ -131,6 +139,26 @@ public:
       if (logFile_.is_open()) {
         logFile_.flush();
       }
+    }
+  }
+
+  ~AsyncLogSystem() noexcept { Stop(); }
+
+public:
+  template <typename... Args>
+  void Log(LogLevel level, const string &fmt, Args &&...args) {
+    if (isStop_ || static_cast<int>(level) < config_.output.minLogLevel) {
+      return;
+    }
+    auto msg =
+        LogMessage(level, FormatMessage(fmt, std::forward<Args>(args)...));
+
+    // 分发到不同对列
+    if (config_.output.toConsole) {
+      consoleQue_->Push(LogMessage(msg)); // 复制一份给控制台
+    }
+    if (config_.output.toFile) {
+      fileQue_->Push(std::move(msg)); // 直接移动给文件队列,提高性能
     }
   }
 
@@ -160,6 +188,7 @@ public:
     Log(LogLevel::FATAL, fmt, std::forward<Args>(args)...);
   }
 
+public:
   string getCurrentLogFilePath() const {
     // 获取完整的绝对路径
     return currentLogFilePath_;
@@ -335,6 +364,7 @@ public:
         newLogFile = generateLogFileName();
       }
 
+      string oldLogFilePath = currentLogFilePath_;
       currentLogFilePath_ = newLogFile;
       // 打开新的日志文件
       logFile_.open(currentLogFilePath_, std::ios::app | std::ios::out);
@@ -348,9 +378,25 @@ public:
                << "] [SYSTEM] New log file created after rotation."
                << std::endl;
       logFile_.flush();
+      // 上传旧日志文件
+      if (std::filesystem::exists(oldLogFilePath) && cloudUploader_) {
+        bool success = cloudUploader_->uploadFileSync(oldLogFilePath);
+        if (success) {
+          if (config_.cloud.deleteAfterUpload) {
+            std::filesystem::remove(oldLogFilePath);
+          }
+          std::cout << "Uploaded old log file: " << oldLogFilePath << std::endl;
+        } else {
+          std::cerr << "Failed to upload old log file: " << oldLogFilePath
+                    << std::endl;
+        }
+      }
       // 清理旧日志文件
       cleanupOldLogFiles();
+      // 增加轮转次数
+      ++rotateCounts_;
       return true;
+
     } catch (const std::exception &e) {
       std::cerr << "Error during log rotation: " << e.what() << std::endl;
       return false;
@@ -392,54 +438,18 @@ public:
     }
   }
 
+  // 获取上传队列状态
+  size_t getUploadQueueSize() const {
+    if (!cloudUploader_) {
+      return 0;
+    }
+    return cloudUploader_->getQueueSize();
+  }
+
+  // 检查云端上传是否启用
+  bool isCloudUploadEnabled() const { return cloudUploader_ != nullptr; }
+
 private:
-  inline string LevelToString(LogLevel level) {
-    switch (level) {
-    case LogLevel::DEBUG:
-      return "DEBUG";
-    case LogLevel::INFO:
-      return "INFO ";
-    case LogLevel::WARN:
-      return "WARN ";
-    case LogLevel::ERROR:
-      return "ERROR";
-    case LogLevel::FATAL:
-      return "FATAL";
-    default:
-      return "UNKNOWN";
-    }
-  }
-
-  inline string LevelColor(LogLevel level) {
-    switch (level) {
-    case LogLevel::DEBUG:
-      return "\033[0;37m"; // 白色
-    case LogLevel::INFO:
-      return "\033[0;32m"; // 绿色
-    case LogLevel::WARN:
-      return "\033[1;33m"; // 黄色
-    case LogLevel::ERROR:
-      return "\033[1;31m"; // 红色
-    case LogLevel::FATAL:
-      return "\033[1;35m"; // 紫色
-    default:
-      return "\033[0m"; // 默认
-    }
-  }
-
-  inline bool CreateLogDirectory(const string &path) {
-    try {
-      auto dir = std::filesystem::path(path).parent_path();
-      if (!std::filesystem::exists(dir)) {
-        std::filesystem::create_directories(dir);
-      }
-      return true;
-    } catch (const std::exception &e) {
-      std::cerr << "Failed to create log directory: " << e.what() << std::endl;
-      return false;
-    }
-  }
-
   // 控制台输出线程
   inline void ConsoleWorkerLoop() {
     LogQueue::QueueType batchQueue; // 当前批次的日志消息队列
@@ -582,7 +592,10 @@ private:
   RotationType rotationType_; // 轮转类型
   string lastRotationDate_;   // 上次轮转的日期(用于按时间轮转)
   atomic<bool> isRotating_;   // 是否正在轮转
+  atomic<int> rotateCounts_;  // 轮转次数
 
+private:
+  unique_ptr<CloudUploader> cloudUploader_; // 云上传器
 }; // class AsyncLogSystem
 
 } // namespace lyf

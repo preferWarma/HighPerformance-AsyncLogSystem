@@ -19,5 +19,16 @@
     "rotation": {
         "maxLogFileSize": 104857600,
         "maxLogFileCount": 10
+    },
+    "cloud": {
+        "enable": true,
+        "serverUrl": "localhost:50000",
+        "uploadEndpoint": "/api/upload",
+        "uploadTimeout_s": 5,
+        "deleteAfterUpload": false,
+        "apiKey": "123456",
+        "maxRetries": 3,
+        "retryDelay_s": 30,
+        "maxQueueSize": 100
     }
 }

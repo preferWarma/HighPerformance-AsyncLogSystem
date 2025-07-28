@@ -1,5 +1,12 @@
+# test/cmakelists.txt
+
 # 查找 GoogleTest
 find_package(GTest REQUIRED)
+
+# 查找curl库
+find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)
+pkg_check_modules(CURL REQUIRED libcurl)
 
 # 包含 GoogleTest
 include_directories(${GTEST_INCLUDE_DIRS})
@@ -14,8 +21,9 @@ enable_testing() # 启用测试功能
 foreach(SOURCE ${LYF_SOURCES})
     get_filename_component(TEST_NAME ${SOURCE} NAME_WE) # 获取文件名
     add_executable(${TEST_NAME} ${SOURCE}) # 添加可执行文件
-    target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/include) # 添加头文件路径
-    target_link_libraries(${TEST_NAME} ${GTEST_LIBRARIES} pthread) # 链接gtest
+    target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/include ${CURL_INCLUDE_DIRS}) # 添加头文件路径
+    target_link_libraries(${TEST_NAME} ${GTEST_LIBRARIES} pthread ${CURL_LIBRARIES}) # 链接gtest, curl
+    target_compile_options(${TEST_NAME} PRIVATE ${CURL_CFLAGS_OTHER})
 
     # 包含测试
     include(GoogleTest)
@@ -24,3 +32,4 @@ foreach(SOURCE ${LYF_SOURCES})
     # 添加测试
     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 endforeach(SOURCE ${LYF_SOURCES})
+
