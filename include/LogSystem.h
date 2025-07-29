@@ -240,8 +240,8 @@ public:
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
     std::stringstream ss;
-    ss << "log_" << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S")
-       << ".txt";
+    ss << "log_" << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S_")
+       << rotateCounts_ << ".txt";
     return (std::filesystem::path(config_.output.logRootDir) / ss.str())
         .string();
   }
@@ -290,6 +290,8 @@ public:
                << "] [SYSTEM] Log system started. File: " << currentLogFilePath_
                << std::endl;
       logFile_.flush();
+      currentFileWrittenBytes_ =
+          std::filesystem::file_size(currentLogFilePath_);
       return true;
     } catch (const std::exception &e) {
       std::cerr << "Error initializing log file: " << e.what() << std::endl;
@@ -307,8 +309,8 @@ public:
       // 检查文件大小
       if (rotationType_ == RotationType::BY_SIZE ||
           rotationType_ == RotationType::BY_SIZE_AND_TIME) {
-        auto fileSize = std::filesystem::file_size(currentLogFilePath_);
-        if (fileSize >= config_.rotation.maxFileSize) {
+        if (currentFileWrittenBytes_.load(std::memory_order_relaxed) >=
+            config_.rotation.maxFileSize) {
           needRotation = true;
         }
       }
@@ -379,7 +381,7 @@ public:
                << std::endl;
       logFile_.flush();
       // 上传旧日志文件
-      if (std::filesystem::exists(oldLogFilePath) && cloudUploader_) {
+      if (std::filesystem::exists(oldLogFilePath) && isCloudUploadEnabled()) {
         bool success = cloudUploader_->uploadFileSync(oldLogFilePath);
         if (success) {
           if (config_.cloud.deleteAfterUpload) {
@@ -395,6 +397,7 @@ public:
       cleanupOldLogFiles();
       // 增加轮转次数
       ++rotateCounts_;
+      currentFileWrittenBytes_.store(0, std::memory_order_relaxed);
       return true;
 
     } catch (const std::exception &e) {
@@ -446,8 +449,12 @@ public:
     return cloudUploader_->getQueueSize();
   }
 
+  const auto &getCloudUploader() const { return cloudUploader_; }
+
   // 检查云端上传是否启用
-  bool isCloudUploadEnabled() const { return cloudUploader_ != nullptr; }
+  bool isCloudUploadEnabled() const {
+    return config_.cloud.enable && cloudUploader_ != nullptr;
+  }
 
 private:
   // 控制台输出线程
@@ -480,18 +487,10 @@ private:
     std::string buffer;
     buffer.reserve(1024 * 64); // 预分配64KB缓冲区
 
-    auto CheckMayBeRotate = [&]() {
-      if (needsRotation()) {
-        if (rotateLogFile()) {
-          std::cout << "Log rotated to: " << currentLogFilePath_ << std::endl;
-        }
-      }
-    };
     auto work = [&]() {
       ProcessFileBatch(batchQueue, buffer);
       batchQueue = LogQueue::QueueType();
       buffer.clear();
-      CheckMayBeRotate();
     };
 
     while (!isStop_.load(std::memory_order_relaxed)) {
@@ -545,29 +544,53 @@ private:
     if (batchQueue.empty()) {
       return;
     }
+
+    auto writeFile = [&](const char *data, size_t size) {
+      if (!logFile_.is_open() || size == 0) {
+        return;
+      }
+      lock_guard<mutex> lock(fileMtx_);
+      logFile_.write(data, size);
+      currentFileWrittenBytes_.fetch_add(size, std::memory_order_relaxed);
+    };
+
     while (!batchQueue.empty()) {
+      if (needsRotation()) {
+        if (!buffer.empty()) {
+          writeFile(buffer.data(), buffer.size());
+          buffer.clear();
+        }
+        if (rotateLogFile()) {
+          std::cout << "Log rotated to: " << currentLogFilePath_ << std::endl;
+        }
+      }
+
       auto msg = std::move(batchQueue.front());
       batchQueue.pop();
 
-      buffer +=
-          "[" + formatTime(msg.time) + "] [" + LevelToString(msg.level) + "] ";
-      buffer += msg.content;
-      buffer += "\n";
+      std::string msgStr = "[" + formatTime(msg.time) + "] [" +
+                           LevelToString(msg.level) + "] " + msg.content + "\n";
+
+      // 避免缓冲区无限增长
+      if (buffer.size() + msgStr.size() > 1024 * 64) {
+        writeFile(buffer.data(), buffer.size());
+        buffer.clear();
+      }
+      buffer += msgStr;
     }
 
-    // 大块写入, 定期flush
     if (!buffer.empty()) {
+      writeFile(buffer.data(), buffer.size());
+      buffer.clear();
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - lastFileFlushTime_ >= config_.performance.fileFlushInterval) {
       lock_guard<mutex> lock(fileMtx_);
       if (logFile_.is_open()) {
-        logFile_.write(buffer.data(), buffer.size());
-      }
-      // 根据文件刷新间隔配置, 决定是否立即刷新
-      auto now = std::chrono::steady_clock::now();
-
-      if (now - lastFileFlushTime_ >= config_.performance.fileFlushInterval) {
         logFile_.flush();
-        lastFileFlushTime_ = now;
       }
+      lastFileFlushTime_ = now;
     }
   }
 
@@ -593,6 +616,7 @@ private:
   string lastRotationDate_;   // 上次轮转的日期(用于按时间轮转)
   atomic<bool> isRotating_;   // 是否正在轮转
   atomic<int> rotateCounts_;  // 轮转次数
+  atomic<size_t> currentFileWrittenBytes_{0};
 
 private:
   unique_ptr<CloudUploader> cloudUploader_; // 云上传器

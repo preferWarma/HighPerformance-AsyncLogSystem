@@ -5,15 +5,17 @@ class LogManager {
         this.currentFileId = null;
         this.currentStartLine = 0;
         this.linesPerPage = 100;
+        this.filesPerPage = 20;
     }
 
     // 加载文件列表
     async loadFileList(page = 1, search = '') {
         try {
-            const response = await fetch(`/api/logs?page=${page}&search=${search}`);
+            const response = await fetch(`/api/logs?page=${page}&per_page=${this.filesPerPage}&search=${search}`);
             const data = await response.json();
 
             this.renderFileTable(data.files);
+            this.renderPaginationInfo(data);
             this.renderPagination(data);
             this.currentPage = page;
         } catch (error) {
@@ -46,6 +48,98 @@ class LogManager {
             `;
             tbody.appendChild(row);
         });
+    }
+
+    // 渲染分页信息
+    renderPaginationInfo(data) {
+        const container = document.getElementById('fileListContainer');
+        let infoDiv = document.getElementById('paginationInfo');
+        
+        if (!infoDiv) {
+            infoDiv = document.createElement('div');
+            infoDiv.id = 'paginationInfo';
+            infoDiv.className = 'pagination-info text-muted mb-3';
+            container.insertBefore(infoDiv, container.firstChild);
+        }
+        
+        infoDiv.innerHTML = `
+            共 ${data.total} 个文件，每页显示 ${data.per_page} 个，
+            第 ${data.current_page}/${data.pages || 1} 页
+        `;
+    }
+
+    // 渲染分页控件
+    renderPagination(data) {
+        const pagination = document.getElementById('pagination');
+        pagination.innerHTML = '';
+
+        if (!data.pages || data.pages <= 1) {
+            return;
+        }
+
+        // 首页
+        const firstLi = document.createElement('li');
+        firstLi.className = `page-item ${data.current_page === 1 ? 'disabled' : ''}`;
+        firstLi.innerHTML = `
+            <a class="page-link" href="#" onclick="logManager.loadFileList(1, document.getElementById('searchInput').value)">
+                首页
+            </a>
+        `;
+        pagination.appendChild(firstLi);
+
+        // 上一页
+        const prevLi = document.createElement('li');
+        prevLi.className = `page-item ${data.current_page === 1 ? 'disabled' : ''}`;
+        prevLi.innerHTML = `
+            <a class="page-link" href="#" onclick="logManager.loadFileList(${data.current_page - 1}, document.getElementById('searchInput').value)">
+                上一页
+            </a>
+        `;
+        pagination.appendChild(prevLi);
+
+        // 页码
+        let startPage = Math.max(1, data.current_page - 2);
+        let endPage = Math.min(data.pages, data.current_page + 2);
+
+        // 确保显示足够的页码
+        if (endPage - startPage < 4) {
+            if (startPage === 1) {
+                endPage = Math.min(5, data.pages);
+            } else if (endPage === data.pages) {
+                startPage = Math.max(1, data.pages - 4);
+            }
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            const li = document.createElement('li');
+            li.className = `page-item ${i === data.current_page ? 'active' : ''}`;
+            li.innerHTML = `
+                <a class="page-link" href="#" onclick="logManager.loadFileList(${i}, document.getElementById('searchInput').value)">
+                    ${i}
+                </a>
+            `;
+            pagination.appendChild(li);
+        }
+
+        // 下一页
+        const nextLi = document.createElement('li');
+        nextLi.className = `page-item ${data.current_page === data.pages ? 'disabled' : ''}`;
+        nextLi.innerHTML = `
+            <a class="page-link" href="#" onclick="logManager.loadFileList(${data.current_page + 1}, document.getElementById('searchInput').value)">
+                下一页
+            </a>
+        `;
+        pagination.appendChild(nextLi);
+
+        // 末页
+        const lastLi = document.createElement('li');
+        lastLi.className = `page-item ${data.current_page === data.pages ? 'disabled' : ''}`;
+        lastLi.innerHTML = `
+            <a class="page-link" href="#" onclick="logManager.loadFileList(${data.pages}, document.getElementById('searchInput').value)">
+                末页(${data.pages})
+            </a>
+        `;
+        pagination.appendChild(lastLi);
     }
 
     // 查看日志内容
@@ -166,19 +260,19 @@ LogManager.prototype.deleteFile = async function (fileId, filename) {
         console.error('文件ID不能为空');
         return;
     }
-    
+
     // 确认删除
     if (!confirm(`确定要删除文件 "${filename}" 吗？`)) {
         return;
     }
-    
+
     try {
         const response = await fetch(`/api/logs/${fileId}`, {
             method: 'DELETE'
         });
-        
+
         const data = await response.json();
-        
+
         if (response.ok) {
             alert('文件删除成功');
             // 重新加载文件列表

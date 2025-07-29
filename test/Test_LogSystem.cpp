@@ -11,6 +11,7 @@
 #include <future>
 #include <random>
 #include <sstream>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -245,11 +246,11 @@ TEST_F(LogRotationTest, SizeBasedRotation) {
   logger.setMaxFileSize(1024); // 1KB
   logger.setMaxFileCount(3);
 
+  std::string big_msg(1000, 'X');
+
   // 写入大量日志触发轮转
   for (int i = 0; i < 100; ++i) {
-    LOG_INFO("Size rotation test message {} - adding extra content to increase "
-             "size and trigger rotation",
-             i);
+    LOG_INFO("big msg: {}", big_msg);
   }
 
   logger.Stop();

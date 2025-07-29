@@ -32,7 +32,7 @@ class LogFile(db.Model):
     file_path = db.Column(db.String(500), nullable=False)
     file_size = db.Column(db.BigInteger, nullable=False)
     file_hash = db.Column(db.String(64))  # SHA256哈希，用于去重
-    upload_time = db.Column(db.DateTime, default=datetime.utcnow)
+    upload_time = db.Column(db.DateTime, default=datetime.now)
     client_info = db.Column(db.String(500))
     is_deleted = db.Column(db.Boolean, default=False)
     
@@ -77,6 +77,11 @@ def format_file_size(size_bytes):
 def index():
     """主页面"""
     return render_template('index.html')
+
+@app.route('/ping', methods=['GET'])
+def ping():
+    """测试服务器是否运行"""
+    return jsonify({'message': 'Server is running'}), 200
 
 @app.route('/api/upload', methods=['POST'])
 def upload_log_file():
@@ -123,7 +128,7 @@ def upload_log_file():
             file_path=file_path,
             file_size=file_size,
             file_hash=file_hash,
-            upload_time=datetime.utcnow(),
+            upload_time=datetime.now(),
             client_info=request.headers.get('User-Agent', '')
         )
         

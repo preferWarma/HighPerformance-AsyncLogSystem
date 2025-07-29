@@ -1,5 +1,3 @@
-# test/cmakelists.txt
-
 # 查找 GoogleTest
 find_package(GTest REQUIRED)
 
@@ -33,3 +31,7 @@ foreach(SOURCE ${LYF_SOURCES})
     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 endforeach(SOURCE ${LYF_SOURCES})
 
+find_package(benchmark REQUIRED)
+add_executable(log_benchmark log_benchmark.cpp)
+target_include_directories(log_benchmark PRIVATE ${PROJECT_SOURCE_DIR}/include ${CURL_INCLUDE_DIRS})
+target_link_libraries(log_benchmark PRIVATE benchmark::benchmark pthread ${CURL_LIBRARIES})
