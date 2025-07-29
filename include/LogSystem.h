@@ -25,7 +25,7 @@
 
 namespace lyf {
 using steady_clock = std::chrono::steady_clock;
-using std::unique_ptr, std::make_unique;
+using std::unique_ptr, std::make_unique, std::mutex, std::lock_guard;
 
 class AsyncLogSystem : public Singleton<AsyncLogSystem> {
   friend class Singleton<AsyncLogSystem>;
@@ -470,14 +470,15 @@ private:
     };
 
     while (!isStop_.load(std::memory_order_relaxed)) {
-      if (consoleQue_->PopAll(batchQueue,
-                              config_.performance.consoleFlushInterval)) {
+      if (consoleQue_->PopAll(batchQueue) > 0) {
         work();
+      } else {
+        // 队列为空，短暂休眠避免忙等待
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
     }
     // 处理剩余的日志消息
-    while (consoleQue_->PopAll(batchQueue,
-                               config_.performance.consoleFlushInterval)) {
+    while (consoleQue_->PopAll(batchQueue) > 0) {
       work();
     }
   }
@@ -494,13 +495,15 @@ private:
     };
 
     while (!isStop_.load(std::memory_order_relaxed)) {
-      if (fileQue_->PopAll(batchQueue, config_.performance.fileFlushInterval)) {
+      if (fileQue_->PopAll(batchQueue) > 0) {
         work();
+      } else {
+        // 队列为空，短暂休眠避免忙等待
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
     }
     // 处理剩余的日志消息
-    while (
-        fileQue_->PopAll(batchQueue, config_.performance.fileFlushInterval)) {
+    while (fileQue_->PopAll(batchQueue) > 0) {
       work();
     }
   }
@@ -513,7 +516,7 @@ private:
     size_t processedCount = 0;
     while (!batchQueue.empty()) {
       auto msg = std::move(batchQueue.front());
-      batchQueue.pop();
+      batchQueue.pop_front();
 
       buffer += LevelColor(msg.level);
       buffer +=
@@ -566,7 +569,7 @@ private:
       }
 
       auto msg = std::move(batchQueue.front());
-      batchQueue.pop();
+      batchQueue.pop_front();
 
       std::string msgStr = "[" + formatTime(msg.time) + "] [" +
                            LevelToString(msg.level) + "] " + msg.content + "\n";

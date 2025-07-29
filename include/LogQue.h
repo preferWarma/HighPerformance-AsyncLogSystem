@@ -1,105 +1,67 @@
 #pragma once
 
 #include "Config.h"
+#include "concurrentqueue.h"
 #include "enum.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstddef>
-#include <mutex>
-#include <queue>
+#include <deque>
 #include <string>
 #include <vector>
 
 namespace lyf {
 using time_point = std::chrono::system_clock::time_point;
-using std::mutex, std::condition_variable, std::lock_guard;
-using std::string, std::queue, std::vector, std::atomic;
+using std::string, std::vector, std::atomic;
 using std::chrono::system_clock;
 
 struct LogMessage {
-  LogLevel level;  // 日志级别
-  string content;  // 日志内容
-  time_point time; // 日志时间
+  LogLevel level;
+  string content;
+  time_point time;
 
   LogMessage(LogLevel level, string content)
       : level(level), content(std::move(content)), time(system_clock::now()) {}
+
+  // moodycamel::ConcurrentQueue 需要元素是可移动的
+  LogMessage(LogMessage &&other) noexcept = default;
+  LogMessage &operator=(LogMessage &&other) noexcept = default;
+
+  // 并且可复制，用于控制台队列的复制
+  LogMessage(const LogMessage &other) = default;
+  LogMessage &operator=(const LogMessage &other) = default;
 };
 
 // 日志队列
 class LogQueue {
   using milliseconds = std::chrono::milliseconds;
+  using ConcurrentQueue = moodycamel::ConcurrentQueue<LogMessage>;
 
 public:
-  using QueueType = queue<LogMessage>;
+  // LogSystem 中用于批量处理的队列类型
+  using QueueType = std::deque<LogMessage>;
 
 public:
-  LogQueue(size_t maxSize) : isStop_(false), maxSize_(maxSize) {}
+  LogQueue(size_t maxSize) : queue_(maxSize) {}
 
   // 生产端：添加日志消息
-  void Push(LogMessage &&msg) {
-    lock_guard<mutex> lock(queMtx_);
-    currentQueue_.push(std::move(msg));
-    if (currentQueue_.size() >= maxSize_) {
-      fullQueues_.push(std::move(currentQueue_));
-      currentQueue_ = QueueType();
-      notEmpty_.notify_one();
-    }
+  void Push(LogMessage &&msg) noexcept { queue_.enqueue(std::move(msg)); }
+
+  void Push(const LogMessage &msg) noexcept { queue_.enqueue(msg); }
+
+  // 消费端：获取所有日志消息(批量获取,一次获取最多batch_size条消息)
+  size_t PopAll(QueueType &output, size_t batch_size = 1024) {
+    return queue_.try_dequeue_bulk(std::back_inserter(output), batch_size);
   }
 
-  // 消费端：获取所有日志消息（添加超时机制）
-  bool PopAll(QueueType &output, milliseconds timeout = milliseconds(100)) {
-    std::unique_lock<mutex> lock(queMtx_);
-    notEmpty_.wait_for(lock, timeout,
-                       [this] { return !fullQueues_.empty() || isStop_; });
+  // 改为无锁队列后 Stop 不需要做任何事
+  void Stop() {}
 
-    if (fullQueues_.empty() && currentQueue_.empty()) {
-      return false; // Nothing to do
-    }
-
-    queue<QueueType> localFullQueues;
-    if (!fullQueues_.empty()) {
-      localFullQueues.swap(fullQueues_);
-    }
-
-    if (!currentQueue_.empty()) {
-      localFullQueues.push(std::move(currentQueue_));
-      currentQueue_ = QueueType();
-    }
-    lock.unlock();
-
-    if (localFullQueues.empty()) {
-      return false;
-    }
-
-    // Merge all local queues into the output queue
-    output = std::move(localFullQueues.front());
-    localFullQueues.pop();
-    while (!localFullQueues.empty()) {
-      auto &q = localFullQueues.front();
-      while (!q.empty()) {
-        output.push(std::move(q.front()));
-        q.pop();
-      }
-      localFullQueues.pop();
-    }
-    return true;
-  }
-
-  void Stop() {
-    if (isStop_.exchange(true)) {
-      notEmpty_.notify_all();
-      return;
-    }
-  }
+  size_t size_approx() const { return queue_.size_approx(); }
 
 private:
-  QueueType currentQueue_;      // 当前生产队列
-  queue<QueueType> fullQueues_; // 满了的日志队列
-  mutable mutex queMtx_;        // 互斥锁
-  condition_variable notEmpty_; // 条件变量, 用于等待队列有数据
-  atomic<bool> isStop_;         // 是否关闭
-  size_t maxSize_;              // 最大队列大小
+  ConcurrentQueue queue_;
 }; // class LogQueue
 
 } // namespace lyf
