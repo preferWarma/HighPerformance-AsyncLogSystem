@@ -16,10 +16,6 @@ int main() {
   // 手动触发轮转（会自动上传旧文件）
   logger.forceRotation();
 
-  // 检查上传状态
-  std::cout << "Upload queue size: " << logger.getUploadQueueSize()
-            << std::endl;
-
   // 程序结束时自动清理
   return 0;
 }

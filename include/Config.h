@@ -3,6 +3,9 @@
 #include "Singleton.h"
 #include <string>
 
+// 条件编译，减少第三方依赖，便于移植和快速使用
+// #define CLOUD_INCLUDE
+
 namespace lyf {
 using std::string;
 using std::chrono::milliseconds;

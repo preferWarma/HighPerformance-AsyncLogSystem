@@ -1,10 +1,13 @@
 #pragma once
 
-#include "CloudUploader.h"
 #include "Config.h"
 #include "Helper.h"
 #include "LogQue.h"
 #include "Singleton.h"
+
+#if defined(CLOUD_INCLUDE)
+#include "CloudUploader.h"
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -56,6 +59,7 @@ public:
     }
 
     if (config_.cloud.enable) {
+#if defined(CLOUD_INCLUDE)
       cloudUploader_ = make_unique<CloudUploader>();
       cloudUploader_->start();
 
@@ -68,6 +72,7 @@ public:
         std::cout << "[Cloud] Cloud upload enabled, serverUrl:"
                   << config_.cloud.serverUrl << std::endl;
       }
+#endif
     }
 
     // 启动控制台输出线程
@@ -106,6 +111,7 @@ public:
       }
     }
     // 停止云端上传器
+#if defined(CLOUD_INCLUDE)
     if (cloudUploader_) {
       // 轮转过，把最新的文件上传
       if (rotateCounts_ > 0) {
@@ -113,6 +119,7 @@ public:
       }
       cloudUploader_->stop();
     }
+#endif
 
     if (logFile_.is_open()) {
       logFile_.close();
@@ -380,6 +387,7 @@ public:
                << "] [SYSTEM] New log file created after rotation."
                << std::endl;
       logFile_.flush();
+#if defined(CLOUD_INCLUDE)
       // 上传旧日志文件
       if (std::filesystem::exists(oldLogFilePath) && isCloudUploadEnabled()) {
         bool success = cloudUploader_->uploadFileSync(oldLogFilePath);
@@ -393,6 +401,7 @@ public:
                     << std::endl;
         }
       }
+#endif
       // 清理旧日志文件
       cleanupOldLogFiles();
       // 增加轮转次数
@@ -441,6 +450,7 @@ public:
     }
   }
 
+#if defined(CLOUD_INCLUDE)
   // 获取上传队列状态
   size_t getUploadQueueSize() const {
     if (!cloudUploader_) {
@@ -455,6 +465,7 @@ public:
   bool isCloudUploadEnabled() const {
     return config_.cloud.enable && cloudUploader_ != nullptr;
   }
+#endif
 
 private:
   // 控制台输出线程
@@ -621,8 +632,11 @@ private:
   atomic<int> rotateCounts_;  // 轮转次数
   atomic<size_t> currentFileWrittenBytes_{0};
 
+#if defined(CLOUD_INCLUDE)
 private:
   unique_ptr<CloudUploader> cloudUploader_; // 云上传器
+#endif
+
 }; // class AsyncLogSystem
 
 } // namespace lyf
