@@ -6,7 +6,6 @@
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
-#include <iostream>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -31,7 +30,7 @@ public:
     shouldStop_ = false;
     uploadWorker_ = std::thread(&CloudUploader::uploadWorkerLoop, this);
 
-    std::cout << "[CloudUploader] Upload service started" << std::endl;
+    Config::InternalOutput("[CloudUploader] Upload service started");
   }
 
   // 停止上传服务
@@ -47,7 +46,7 @@ public:
       uploadWorker_.join();
     }
 
-    std::cout << "[CloudUploader] Upload service stopped" << std::endl;
+    Config::InternalOutput("[CloudUploader] Upload service stopped");
   }
 
   // 添加文件到上传队列
@@ -59,16 +58,14 @@ public:
     std::lock_guard<std::mutex> lock(queueMutex_);
 
     if (uploadQueue_.size() >= config_.cloud.maxQueueSize) {
-      std::cerr << "[CloudUploader] Upload queue is full, dropping file: "
-                << filePath << std::endl;
+      Config::InternalOutput("[CloudUploader] Upload queue is full, dropping file: ", filePath);
       return false;
     }
 
     uploadQueue_.emplace(filePath);
     queueCondition_.notify_one();
 
-    std::cout << "[CloudUploader] Scheduled upload for: " << filePath
-              << std::endl;
+    Config::InternalOutput("[CloudUploader] Scheduled upload for: ", filePath);
     return true;
   }
 
@@ -130,14 +127,15 @@ private:
 private:
   // 工作线程主循环
   inline void uploadWorkerLoop() {
-    while (!shouldStop_) {
+    while (true) {
       std::unique_lock<std::mutex> lock(queueMutex_);
 
       // 等待队列有任务或收到停止信号
       queueCondition_.wait(
           lock, [this] { return !uploadQueue_.empty() || shouldStop_; });
 
-      if (shouldStop_) {
+      // 如果收到停止信号且队列已空，则退出
+      if (shouldStop_ && uploadQueue_.empty()) {
         break;
       }
 
@@ -166,13 +164,9 @@ private:
               now + std::chrono::seconds(config_.cloud.retryDelay_s);
           retryQueue.push(task);
 
-          std::cout << "[CloudUploader] Upload failed, scheduling retry "
-                    << task.retryCount << "/" << config_.cloud.maxRetries
-                    << " for: " << task.filePath << std::endl;
+          Config::InternalOutput("[CloudUploader] Upload failed, scheduling retry ", task.retryCount, "/", config_.cloud.maxRetries, " for: ", task.filePath);
         } else if (!success) {
-          std::cerr << "[CloudUploader] Upload failed permanently after "
-                    << config_.cloud.maxRetries << " retries: " << task.filePath
-                    << std::endl;
+          Config::InternalOutput("[CloudUploader] Upload failed permanently after ", config_.cloud.maxRetries, " retries: ", task.filePath);
         }
 
         lock.lock();
@@ -185,7 +179,7 @@ private:
       }
     }
 
-    std::cout << "[CloudUploader] Worker thread exiting" << std::endl;
+    Config::InternalOutput("[CloudUploader] Worker thread exiting");
   }
 
   // 执行单个文件上传
@@ -214,11 +208,9 @@ private:
       if (config_.cloud.deleteAfterUpload) {
         try {
           std::filesystem::remove(task.filePath);
-          std::cout << "[CloudUploader] Deleted local file: " << task.filePath
-                    << std::endl;
+          Config::InternalOutput("[CloudUploader] Deleted local file: ", task.filePath);
         } catch (const std::exception &e) {
-          std::cerr << "[CloudUploader] Failed to delete local file "
-                    << task.filePath << ": " << e.what() << std::endl;
+          Config::InternalOutput("[CloudUploader] Failed to delete local file ", task.filePath, ": ", e.what());
         }
       }
 
@@ -238,8 +230,7 @@ private:
              std::filesystem::is_regular_file(filePath) &&
              std::filesystem::file_size(filePath) > 0;
     } catch (const std::exception &e) {
-      std::cerr << "[CloudUploader] File validation error: " << e.what()
-                << std::endl;
+      Config::InternalOutput("[CloudUploader] File validation error: ", e.what());
       return false;
     }
   }
@@ -248,11 +239,9 @@ private:
   inline void logUploadResult(const std::string &filePath, bool success,
                               const std::string &message) {
     if (success) {
-      std::cout << "[CloudUploader] ✓ Upload successful: " << filePath
-                << std::endl;
+      Config::InternalOutput("[CloudUploader] ✓ Upload successful: ", filePath);
     } else {
-      std::cerr << "[CloudUploader] ✗ Upload failed: " << filePath << " - "
-                << message << std::endl;
+      Config::InternalOutput("[CloudUploader] ✗ Upload failed: ", filePath, " - ", message);
     }
   }
 };

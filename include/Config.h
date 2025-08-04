@@ -13,7 +13,15 @@ using std::chrono::milliseconds;
 struct Config : Singleton<Config> {
   friend class Singleton<Config>;
 
+  template <typename... Args> static void InternalOutput(Args &&...args) {
+    if (!GetInstance().basic.logSystemInternalOutput) {
+      return;
+    }
+    (std::cout << ... << args) << std::endl;
+  }
+
   struct BasicConfig {
+    bool logSystemInternalOutput;  // 是否输出日志系统内部信息
     size_t maxConsoleLogQueueSize; // 最大控制台日志队列大小
     size_t maxFileLogQueueSize;    // 最大文件日志队列大小
   } basic;
@@ -55,6 +63,8 @@ struct Config : Singleton<Config> {
   void Init() {
     auto &manager = ConfigManagerImpl::GetInstance();
     { // basic config
+      basic.logSystemInternalOutput =
+          manager.get<bool>("basic.logSystemInternalOutput");
       basic.maxConsoleLogQueueSize =
           manager.get<int>("basic.maxConsoleLogQueueSize");
       basic.maxFileLogQueueSize = manager.get<int>("basic.maxFileLogQueueSize");
@@ -97,4 +107,5 @@ struct Config : Singleton<Config> {
     }
   }
 };
+
 } // namespace lyf

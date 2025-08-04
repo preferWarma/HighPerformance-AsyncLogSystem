@@ -1,5 +1,6 @@
 {
     "basic": {
+        "logSystemInternalOutput": true,
         "maxConsoleLogQueueSize": 1000,
         "maxFileLogQueueSize": 2000
     },

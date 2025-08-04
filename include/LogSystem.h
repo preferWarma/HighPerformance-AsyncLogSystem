@@ -50,10 +50,9 @@ public:
 
     if (config_.output.toFile) {
       if (initializeLogFile()) {
-        std::cout << "Log system initialized. Current log file: "
-                  << currentLogFilePath_ << std::endl;
+        Config::InternalOutput("[LogSystem] Log system initialized. Current log file: ", currentLogFilePath_);
       } else {
-        std::cerr << "Failed to initialize log file." << std::endl;
+        Config::InternalOutput("[LogSystem] Failed to initialize log file.");
         config_.output.toFile = false;
       }
     }
@@ -64,13 +63,10 @@ public:
       cloudUploader_->start();
 
       if (!cloudUploader_->ping()) {
-        std::cerr << "[Cloud] Cloud upload enabled, serverUrl:"
-                  << config_.cloud.serverUrl << " is not available."
-                  << std::endl;
+        Config::InternalOutput("[LogSystem] Cloud upload enabled, serverUrl:", config_.cloud.serverUrl, " is not available.");
         config_.cloud.enable = false;
       } else {
-        std::cout << "[Cloud] Cloud upload enabled, serverUrl:"
-                  << config_.cloud.serverUrl << std::endl;
+        Config::InternalOutput("[LogSystem] Cloud upload enabled, serverUrl:", config_.cloud.serverUrl);
       }
 #endif
     }
@@ -113,10 +109,6 @@ public:
     // 停止云端上传器
 #if defined(CLOUD_INCLUDE)
     if (cloudUploader_) {
-      // 轮转过，把最新的文件上传
-      if (rotateCounts_ > 0) {
-        cloudUploader_->uploadFileSync(currentLogFilePath_);
-      }
       cloudUploader_->stop();
     }
 #endif
@@ -128,9 +120,7 @@ public:
     // 输出系统关闭信息到控制台
     if (config_.output.toConsole) {
       // 红色字体
-      std::cout << "\033[1;31m"
-                << "[" << getCurrentTime() << "] [SYSTEM] Log system closed."
-                << "\033[0m" << std::endl;
+      Config::InternalOutput("[LogSystem] Log system closed.");
     }
   }
 
@@ -215,9 +205,8 @@ public:
   // 手动触发轮转
   void forceRotation() {
     if (rotateLogFile()) {
-      std::cout << "Manual log rotation completed. New file: "
-                << currentLogFilePath_ << std::endl;
-    }
+        Config::InternalOutput("[LogSystem] Manual log rotation completed. New file: ", currentLogFilePath_);
+      }
   }
 
   // 获取日志目录中的所有日志文件
@@ -237,11 +226,12 @@ public:
       // 按文件名排序
       std::sort(files.begin(), files.end());
     } catch (const std::exception &e) {
-      std::cerr << "Error listing log files: " << e.what() << std::endl;
+      std::cerr << "[LogSystem] Error listing log files: " << e.what() << std::endl;
     }
     return files;
   }
 
+private:
   // 生成新的日志文件名
   std::string generateLogFileName() const {
     auto now = std::chrono::system_clock::now();
@@ -274,8 +264,7 @@ public:
       // 创建日志目录
       if (!std::filesystem::exists(config_.output.logRootDir)) {
         std::filesystem::create_directories(config_.output.logRootDir);
-        std::cout << "Created log directory: " << config_.output.logRootDir
-                  << std::endl;
+        Config::InternalOutput("[LogSystem] Created log directory: ", config_.output.logRootDir);
       }
       // 根据轮转类型生成文件名
       if (rotationType_ == RotationType::BY_TIME ||
@@ -288,20 +277,16 @@ public:
       // 打开日志文件
       logFile_.open(currentLogFilePath_, std::ios::app | std::ios::out);
       if (!logFile_.is_open()) {
-        std::cerr << "Failed to open log file: " << currentLogFilePath_
+        std::cerr << "[LogSystem] Failed to open log file: " << currentLogFilePath_
                   << std::endl;
         return false;
       }
-      // 写入启动信息
-      logFile_ << "[" << getCurrentTime()
-               << "] [SYSTEM] Log system started. File: " << currentLogFilePath_
-               << std::endl;
       logFile_.flush();
       currentFileWrittenBytes_ =
           std::filesystem::file_size(currentLogFilePath_);
       return true;
     } catch (const std::exception &e) {
-      std::cerr << "Error initializing log file: " << e.what() << std::endl;
+      std::cerr << "[LogSystem] Error initializing log file: " << e.what() << std::endl;
       return false;
     }
   }
@@ -331,7 +316,7 @@ public:
       }
       return needRotation;
     } catch (const std::exception &e) {
-      std::cerr << "Error checking rotation needs: " << e.what() << std::endl;
+      std::cerr << "[LogSystem] Error checking rotation needs: " << e.what() << std::endl;
       return false;
     }
   }
@@ -352,8 +337,7 @@ public:
       std::lock_guard<std::mutex> lock(fileMtx_);
       // 写入轮转信息到当前文件
       if (logFile_.is_open()) {
-        logFile_ << "[" << getCurrentTime()
-                 << "] [SYSTEM] Log rotation triggered." << std::endl;
+        logFile_.flush();
         logFile_.close();
       }
       // 生成新的日志文件名
@@ -378,39 +362,35 @@ public:
       // 打开新的日志文件
       logFile_.open(currentLogFilePath_, std::ios::app | std::ios::out);
       if (!logFile_.is_open()) {
-        std::cerr << "Failed to open new log file: " << currentLogFilePath_
+        std::cerr << "[LogSystem] Failed to open new log file: " << currentLogFilePath_
                   << std::endl;
         return false;
       }
-      // 写入新文件启动信息
-      logFile_ << "[" << getCurrentTime()
-               << "] [SYSTEM] New log file created after rotation."
-               << std::endl;
       logFile_.flush();
 #if defined(CLOUD_INCLUDE)
       // 上传旧日志文件
       if (std::filesystem::exists(oldLogFilePath) && isCloudUploadEnabled()) {
-        bool success = cloudUploader_->uploadFileSync(oldLogFilePath);
+        bool success = cloudUploader_->scheduleUpload(oldLogFilePath);
         if (success) {
           if (config_.cloud.deleteAfterUpload) {
             std::filesystem::remove(oldLogFilePath);
           }
-          std::cout << "Uploaded old log file: " << oldLogFilePath << std::endl;
+          Config::InternalOutput("[LogSystem] Uploaded old log file: ", oldLogFilePath);
         } else {
-          std::cerr << "Failed to upload old log file: " << oldLogFilePath
-                    << std::endl;
+          Config::InternalOutput("[LogSystem] Failed to upload old log file: ", oldLogFilePath);
         }
       }
 #endif
       // 清理旧日志文件
       cleanupOldLogFiles();
+      Config::InternalOutput("[LogSystem] Old log files cleaned up.");
       // 增加轮转次数
       ++rotateCounts_;
       currentFileWrittenBytes_.store(0, std::memory_order_relaxed);
       return true;
 
     } catch (const std::exception &e) {
-      std::cerr << "Error during log rotation: " << e.what() << std::endl;
+      std::cerr << "[LogSystem] Error during log rotation: " << e.what() << std::endl;
       return false;
     }
   }
@@ -439,17 +419,17 @@ public:
       for (size_t i = config_.rotation.maxFileCount; i < logFiles.size(); ++i) {
         try {
           std::filesystem::remove(logFiles[i]);
-          std::cout << "Removed old log file: " << logFiles[i] << std::endl;
+          Config::InternalOutput("[LogSystem] Removed old log file: ", logFiles[i]);
         } catch (const std::exception &e) {
-          std::cerr << "Failed to remove old log file " << logFiles[i] << ": "
-                    << e.what() << std::endl;
+          Config::InternalOutput("[LogSystem] Failed to remove old log file ", logFiles[i], ": ", e.what());
         }
       }
     } catch (const std::exception &e) {
-      std::cerr << "Error during log cleanup: " << e.what() << std::endl;
+      std::cerr << "[LogSystem] Error during log cleanup: " << e.what() << std::endl;
     }
   }
 
+public:
 #if defined(CLOUD_INCLUDE)
   // 获取上传队列状态
   size_t getUploadQueueSize() const {
@@ -575,7 +555,7 @@ private:
           buffer.clear();
         }
         if (rotateLogFile()) {
-          std::cout << "Log rotated to: " << currentLogFilePath_ << std::endl;
+          Config::InternalOutput("[LogSystem] Log rotated to: ", currentLogFilePath_);
         }
       }
 
