@@ -646,7 +646,7 @@ int main(int argc, char **argv) {
 
   // 设置全局测试环境
   std::cout << "Starting Google Test for Log System..." << std::endl;
-  ConfigManagerImpl::GetInstance().printAll();
+  JsonHelper::GetInstance().PrintAllConfig();
 
   return RUN_ALL_TESTS();
 }

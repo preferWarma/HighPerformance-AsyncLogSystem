@@ -9,9 +9,9 @@ pkg_check_modules(CURL REQUIRED libcurl)
 # 包含 GoogleTest
 include_directories(${GTEST_INCLUDE_DIRS})
 
-set(LYF_SOURCES
+file(GLOB_RECURSE LYF_SOURCES
     Test_LogSystem.cpp
-    Test_ConfigManager.cpp
+    Test_JsonHelper.cpp
 )
 
 enable_testing() # 启用测试功能

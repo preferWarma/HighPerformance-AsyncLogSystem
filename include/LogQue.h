@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Config.h"
-#include "concurrentqueue.h"
-#include "enum.h"
+#include "third/concurrentqueue.h"
+#include "Enum.h"
 
 #include <atomic>
 #include <chrono>

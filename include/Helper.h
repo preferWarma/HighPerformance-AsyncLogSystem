@@ -3,9 +3,20 @@
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
-#include <iostream>
 #include <string>
 #include <thread>
+
+// 是否输出内部日志
+// #define LYF_lyf_Internal_LOG
+
+#ifdef LYF_lyf_Internal_LOG
+#include <iostream>
+template <typename... Args>
+std::string FormatMessage(const std::string &fmt, Args &&...args);
+#define lyf_Internal_LOG(fmt, ...) std::cout << FormatMessage(fmt, ##__VA_ARGS__) << std::endl;
+#else
+#define lyf_Internal_LOG(fmt, ...) ((void)0)
+#endif
 
 namespace lyf {
 
@@ -105,7 +116,7 @@ inline bool CreateLogDirectory(const string &path) {
     }
     return true;
   } catch (const std::exception &e) {
-    std::cerr << "Failed to create log directory: " << e.what() << std::endl;
+    lyf_Internal_LOG("Failed to create log directory: {}\n", e.what());
     return false;
   }
 }

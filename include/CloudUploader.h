@@ -30,7 +30,7 @@ public:
     shouldStop_ = false;
     uploadWorker_ = std::thread(&CloudUploader::uploadWorkerLoop, this);
 
-    Config::InternalOutput("[CloudUploader] Upload service started");
+    lyf_Internal_LOG("[CloudUploader] Upload service started");
   }
 
   // 停止上传服务
@@ -46,7 +46,7 @@ public:
       uploadWorker_.join();
     }
 
-    Config::InternalOutput("[CloudUploader] Upload service stopped");
+    lyf_Internal_LOG("[CloudUploader] Upload service stopped");
   }
 
   // 添加文件到上传队列
@@ -58,14 +58,14 @@ public:
     std::lock_guard<std::mutex> lock(queueMutex_);
 
     if (uploadQueue_.size() >= config_.cloud.maxQueueSize) {
-      Config::InternalOutput("[CloudUploader] Upload queue is full, dropping file: ", filePath);
+      lyf_Internal_LOG("[CloudUploader] Upload queue is full, dropping file: {}", filePath);
       return false;
     }
 
     uploadQueue_.emplace(filePath);
     queueCondition_.notify_one();
 
-    Config::InternalOutput("[CloudUploader] Scheduled upload for: ", filePath);
+    lyf_Internal_LOG("[CloudUploader] Scheduled upload for: {}", filePath);
     return true;
   }
 
@@ -164,9 +164,9 @@ private:
               now + std::chrono::seconds(config_.cloud.retryDelay_s);
           retryQueue.push(task);
 
-          Config::InternalOutput("[CloudUploader] Upload failed, scheduling retry ", task.retryCount, "/", config_.cloud.maxRetries, " for: ", task.filePath);
+          lyf_Internal_LOG("[CloudUploader] Upload failed, scheduling retry {}/{} for: {}", task.retryCount, config_.cloud.maxRetries, task.filePath);
         } else if (!success) {
-          Config::InternalOutput("[CloudUploader] Upload failed permanently after ", config_.cloud.maxRetries, " retries: ", task.filePath);
+          lyf_Internal_LOG("[CloudUploader] Upload failed permanently after {} retries: {}", config_.cloud.maxRetries, task.filePath);
         }
 
         lock.lock();
@@ -179,7 +179,7 @@ private:
       }
     }
 
-    Config::InternalOutput("[CloudUploader] Worker thread exiting");
+    lyf_Internal_LOG("[CloudUploader] Worker thread exiting");
   }
 
   // 执行单个文件上传
@@ -208,9 +208,9 @@ private:
       if (config_.cloud.deleteAfterUpload) {
         try {
           std::filesystem::remove(task.filePath);
-          Config::InternalOutput("[CloudUploader] Deleted local file: ", task.filePath);
+          lyf_Internal_LOG("[CloudUploader] Deleted local file: {}", task.filePath);
         } catch (const std::exception &e) {
-          Config::InternalOutput("[CloudUploader] Failed to delete local file ", task.filePath, ": ", e.what());
+          lyf_Internal_LOG("[CloudUploader] Failed to delete local file {}: {}", task.filePath, e.what());
         }
       }
 
@@ -230,7 +230,7 @@ private:
              std::filesystem::is_regular_file(filePath) &&
              std::filesystem::file_size(filePath) > 0;
     } catch (const std::exception &e) {
-      Config::InternalOutput("[CloudUploader] File validation error: ", e.what());
+      lyf_Internal_LOG("[CloudUploader] File validation error: {}", e.what());
       return false;
     }
   }
@@ -239,9 +239,9 @@ private:
   inline void logUploadResult(const std::string &filePath, bool success,
                               const std::string &message) {
     if (success) {
-      Config::InternalOutput("[CloudUploader] ✓ Upload successful: ", filePath);
+      lyf_Internal_LOG("[CloudUploader] ✓ Upload successful: {}", filePath);
     } else {
-      Config::InternalOutput("[CloudUploader] ✗ Upload failed: ", filePath, " - ", message);
+      lyf_Internal_LOG("[CloudUploader] ✗ Upload failed: {} - {}", filePath, message);
     }
   }
 };

@@ -50,9 +50,9 @@ public:
 
     if (config_.output.toFile) {
       if (initializeLogFile()) {
-        Config::InternalOutput("[LogSystem] Log system initialized. Current log file: ", currentLogFilePath_);
+        lyf_Internal_LOG("[LogSystem] Log system initialized. Current log file: {}", currentLogFilePath_);
       } else {
-        Config::InternalOutput("[LogSystem] Failed to initialize log file.");
+        lyf_Internal_LOG("[LogSystem] Failed to initialize log file.");
         config_.output.toFile = false;
       }
     }
@@ -63,10 +63,10 @@ public:
       cloudUploader_->start();
 
       if (!cloudUploader_->ping()) {
-        Config::InternalOutput("[LogSystem] Cloud upload enabled, serverUrl:", config_.cloud.serverUrl, " is not available.");
+        lyf_Internal_LOG("[LogSystem] Cloud upload enabled, serverUrl: {} is not available.", config_.cloud.serverUrl);
         config_.cloud.enable = false;
       } else {
-        Config::InternalOutput("[LogSystem] Cloud upload enabled, serverUrl:", config_.cloud.serverUrl);
+        lyf_Internal_LOG("[LogSystem] Cloud upload enabled, serverUrl: {}", config_.cloud.serverUrl);
       }
 #endif
     }
@@ -120,7 +120,7 @@ public:
     // 输出系统关闭信息到控制台
     if (config_.output.toConsole) {
       // 红色字体
-      Config::InternalOutput("[LogSystem] Log system closed.");
+      lyf_Internal_LOG("[LogSystem] Log system closed.");
     }
   }
 
@@ -205,7 +205,7 @@ public:
   // 手动触发轮转
   void forceRotation() {
     if (rotateLogFile()) {
-        Config::InternalOutput("[LogSystem] Manual log rotation completed. New file: ", currentLogFilePath_);
+        lyf_Internal_LOG("[LogSystem] Manual log rotation completed. New file: {}", currentLogFilePath_);
       }
   }
 
@@ -264,7 +264,7 @@ private:
       // 创建日志目录
       if (!std::filesystem::exists(config_.output.logRootDir)) {
         std::filesystem::create_directories(config_.output.logRootDir);
-        Config::InternalOutput("[LogSystem] Created log directory: ", config_.output.logRootDir);
+        lyf_Internal_LOG("[LogSystem] Created log directory: {}", config_.output.logRootDir);
       }
       // 根据轮转类型生成文件名
       if (rotationType_ == RotationType::BY_TIME ||
@@ -375,15 +375,15 @@ private:
           if (config_.cloud.deleteAfterUpload) {
             std::filesystem::remove(oldLogFilePath);
           }
-          Config::InternalOutput("[LogSystem] Uploaded old log file: ", oldLogFilePath);
+          lyf_Internal_LOG("[LogSystem] Uploaded old log file: {}", oldLogFilePath);
         } else {
-          Config::InternalOutput("[LogSystem] Failed to upload old log file: ", oldLogFilePath);
+          lyf_Internal_LOG("[LogSystem] Failed to upload old log file: {}", oldLogFilePath);
         }
       }
 #endif
       // 清理旧日志文件
       cleanupOldLogFiles();
-      Config::InternalOutput("[LogSystem] Old log files cleaned up.");
+      lyf_Internal_LOG("[LogSystem] Old log files cleaned up.");
       // 增加轮转次数
       ++rotateCounts_;
       currentFileWrittenBytes_.store(0, std::memory_order_relaxed);
@@ -419,13 +419,13 @@ private:
       for (size_t i = config_.rotation.maxFileCount; i < logFiles.size(); ++i) {
         try {
           std::filesystem::remove(logFiles[i]);
-          Config::InternalOutput("[LogSystem] Removed old log file: ", logFiles[i]);
+          lyf_Internal_LOG("[LogSystem] Removed old log file: {}", logFiles[i]);
         } catch (const std::exception &e) {
-          Config::InternalOutput("[LogSystem] Failed to remove old log file ", logFiles[i], ": ", e.what());
+          lyf_Internal_LOG("[LogSystem] Failed to remove old log file {}: {}", logFiles[i], e.what());
         }
       }
     } catch (const std::exception &e) {
-      std::cerr << "[LogSystem] Error during log cleanup: " << e.what() << std::endl;
+      std::cerr << "[LogSystem] Error during log cleanup: {}\n" << e.what();
     }
   }
 
@@ -555,7 +555,7 @@ private:
           buffer.clear();
         }
         if (rotateLogFile()) {
-          Config::InternalOutput("[LogSystem] Log rotated to: ", currentLogFilePath_);
+          lyf_Internal_LOG("[LogSystem] Log rotated to: {}", currentLogFilePath_);
         }
       }
 

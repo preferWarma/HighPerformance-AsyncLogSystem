@@ -1,9 +1,9 @@
 #pragma once
-#include "ConfigManager.h"
+#include "JsonHelper.h"
 #include "Singleton.h"
 #include <string>
 
-// 条件编译，减少第三方依赖，便于移植和快速使用
+// 是否编译云存储模块
 // #define CLOUD_INCLUDE
 
 namespace lyf {
@@ -13,15 +13,7 @@ using std::chrono::milliseconds;
 struct Config : Singleton<Config> {
   friend class Singleton<Config>;
 
-  template <typename... Args> static void InternalOutput(Args &&...args) {
-    if (!GetInstance().basic.logSystemInternalOutput) {
-      return;
-    }
-    (std::cout << ... << args) << std::endl;
-  }
-
   struct BasicConfig {
-    bool logSystemInternalOutput;  // 是否输出日志系统内部信息
     size_t maxConsoleLogQueueSize; // 最大控制台日志队列大小
     size_t maxFileLogQueueSize;    // 最大文件日志队列大小
   } basic;
@@ -61,51 +53,48 @@ struct Config : Singleton<Config> {
   Config() { Init(); }
 
   void Init() {
-    auto &manager = ConfigManagerImpl::GetInstance();
+    auto &helper = JsonHelper::GetInstance();
     { // basic config
-      basic.logSystemInternalOutput =
-          manager.get<bool>("basic.logSystemInternalOutput");
       basic.maxConsoleLogQueueSize =
-          manager.get<int>("basic.maxConsoleLogQueueSize");
-      basic.maxFileLogQueueSize = manager.get<int>("basic.maxFileLogQueueSize");
+          helper.Get<int>("basic.maxConsoleLogQueueSize");
+      basic.maxFileLogQueueSize = helper.Get<int>("basic.maxFileLogQueueSize");
     }
 
     { // output config
-      output.logRootDir = manager.get<string>("output.logRootDir");
-      output.toFile = manager.get<bool>("output.toFile");
-      output.toConsole = manager.get<bool>("output.toConsole");
-      output.minLogLevel = manager.get<int>("output.minLogLevel");
+      output.logRootDir = helper.Get<string>("output.logRootDir");
+      output.toFile = helper.Get<bool>("output.toFile");
+      output.toConsole = helper.Get<bool>("output.toConsole");
+      output.minLogLevel = helper.Get<int>("output.minLogLevel");
     }
 
     { // performance config
       performance.consoleBatchSize =
-          manager.get<int>("performance.consoleBatchSize");
-      performance.fileBatchSize = manager.get<int>("performance.fileBatchSize");
+          helper.Get<int>("performance.consoleBatchSize");
+      performance.fileBatchSize = helper.Get<int>("performance.fileBatchSize");
       performance.consoleFlushInterval =
-          milliseconds(manager.get<int>("performance.consoleFlushInterval_ms"));
+          milliseconds(helper.Get<int>("performance.consoleFlushInterval_ms"));
       performance.fileFlushInterval =
-          milliseconds(manager.get<int>("performance.fileFlushInterval_ms"));
+          milliseconds(helper.Get<int>("performance.fileFlushInterval_ms"));
       performance.enableAsyncConsole =
-          manager.get<bool>("performance.enableAsyncConsole");
+          helper.Get<bool>("performance.enableAsyncConsole");
     }
 
     { // rotation config
-      rotation.maxFileSize = manager.get<int>("rotation.maxLogFileSize");
-      rotation.maxFileCount = manager.get<int>("rotation.maxLogFileCount");
+      rotation.maxFileSize = helper.Get<int>("rotation.maxLogFileSize");
+      rotation.maxFileCount = helper.Get<int>("rotation.maxLogFileCount");
     }
 
     { // cloud config
-      cloud.enable = manager.get<bool>("cloud.enable");
-      cloud.serverUrl = manager.get<string>("cloud.serverUrl");
-      cloud.uploadEndpoint = manager.get<string>("cloud.uploadEndpoint");
-      cloud.uploadTimeout_s = manager.get<int>("cloud.uploadTimeout_s");
-      cloud.deleteAfterUpload = manager.get<bool>("cloud.deleteAfterUpload");
-      cloud.apiKey = manager.get<string>("cloud.apiKey");
-      cloud.maxRetries = manager.get<int>("cloud.maxRetries");
-      cloud.retryDelay_s = manager.get<int>("cloud.retryDelay_s");
-      cloud.maxQueueSize = manager.get<int>("cloud.maxQueueSize");
+      cloud.enable = helper.Get<bool>("cloud.enable");
+      cloud.serverUrl = helper.Get<string>("cloud.serverUrl");
+      cloud.uploadEndpoint = helper.Get<string>("cloud.uploadEndpoint");
+      cloud.uploadTimeout_s = helper.Get<int>("cloud.uploadTimeout_s");
+      cloud.deleteAfterUpload = helper.Get<bool>("cloud.deleteAfterUpload");
+      cloud.apiKey = helper.Get<string>("cloud.apiKey");
+      cloud.maxRetries = helper.Get<int>("cloud.maxRetries");
+      cloud.retryDelay_s = helper.Get<int>("cloud.retryDelay_s");
+      cloud.maxQueueSize = helper.Get<int>("cloud.maxQueueSize");
     }
   }
 };
-
 } // namespace lyf

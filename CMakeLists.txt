@@ -5,6 +5,8 @@ project(code_template_cmake CXX) # 项目名称 CXX表示C++项目
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON) # C++标准要求
 set(CMAKE_CXX_STANDARD 20) # 设置C++标准版本
+# 使用 o3 优化
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
 # 在配置阶段执行命令，将config.json文件复制到build/test文件夹下
 execute_process(COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/config.json ${CMAKE_BINARY_DIR}/test/config.json)
