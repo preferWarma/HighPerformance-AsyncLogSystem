@@ -1,5 +1,4 @@
 #pragma once
-
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
@@ -10,9 +9,7 @@
 // #define LYF_lyf_Internal_LOG
 
 #ifdef LYF_lyf_Internal_LOG
-#include <iostream>
-template <typename... Args>
-std::string FormatMessage(const std::string &fmt, Args &&...args);
+#include "FastFormater.h"
 #define lyf_Internal_LOG(fmt, ...) std::cout << FormatMessage(fmt, ##__VA_ARGS__) << std::endl;
 #else
 #define lyf_Internal_LOG(fmt, ...) ((void)0)
@@ -61,37 +58,6 @@ inline string formatTime(const system_clock::time_point &timePoint,
 template <typename T> string to_string(T &&arg) {
   std::stringstream oss;
   oss << std::forward<T>(arg);
-  return oss.str();
-}
-
-/// @brief 使用模板折叠格式化日志消息，支持 "{}" 占位符
-/// @param fmt 格式字符串
-/// @param args 参数值
-template <typename... Args>
-string FormatMessage(const string &fmt, Args &&...args) {
-  if constexpr (sizeof...(args) == 0) {
-    return fmt; // 没有参数时直接返回格式字符串
-  }
-  std::ostringstream oss;
-  size_t argIndex = 0;
-  size_t pos = 0;
-
-  auto process_arg = [&](auto &&arg) {
-    size_t placeholder = fmt.find("{}", pos);
-    if (placeholder != string::npos) {
-      oss << fmt.substr(pos, placeholder - pos);
-      oss << std::forward<decltype(arg)>(arg);
-      pos = placeholder + 2;
-    } else {
-      // 没有更多占位符，直接追加参数
-      oss << std::forward<decltype(arg)>(arg);
-    }
-  };
-
-  (process_arg(std::forward<Args>(args)), ...);
-
-  // 添加剩余的格式字符串
-  oss << fmt.substr(pos);
   return oss.str();
 }
 

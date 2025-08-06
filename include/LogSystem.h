@@ -4,6 +4,7 @@
 #include "Helper.h"
 #include "LogQue.h"
 #include "Singleton.h"
+#include "FastFormater.h"
 
 #if defined(CLOUD_INCLUDE)
 #include "CloudUploader.h"
