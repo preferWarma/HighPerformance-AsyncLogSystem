@@ -1,0 +1,93 @@
+Unable to determine clock rate from sysctl: hw.cpufrequency: No such file or directory
+This does not affect benchmark measurements, only the metadata output.
+***WARNING*** Failed to set thread affinity. Estimated CPU frequency may be incorrect.
+2025-08-07T23:29:48+08:00
+Running /Users/liuyifeng/Desktop/C++/LogSystem/build/test/comparison_spdlog
+Run on (10 X 24 MHz CPU s)
+CPU Caches:
+  L1 Data 64 KiB
+  L1 Instruction 128 KiB
+  L2 Unified 4096 KiB (x10)
+Load Average: 2.18, 1.98, 2.13
+--------------------------------------------------------------------------------------------------------
+Benchmark                                              Time             CPU   Iterations UserCounters...
+--------------------------------------------------------------------------------------------------------
+BM_YourLogger_SingleThread                         65741 ns        65656 ns        10225 items_per_second=15.2309M/s
+BM_Spdlog_SingleThread                            230751 ns       194916 ns         3633 items_per_second=5.13042M/s
+BM_YourLogger_MultiThread/threads:8                15574 ns        12434 ns        62312 items_per_second=8.04263M/s
+BM_Spdlog_MultiThread/threads:8                  1366080 ns       526486 ns         1328 items_per_second=189.938k/s
+BM_YourLogger_Latency/manual_time                   38.5 ns         58.9 ns     18072408
+BM_Spdlog_Latency/manual_time                        218 ns          196 ns      3295462
+BM_YourLogger_Formatting                           23183 ns        23176 ns        30363 items_per_second=4.31484M/s
+BM_Spdlog_Formatting                               11746 ns        11732 ns        59021 items_per_second=8.52375M/s
+BM_YourLogger_Memory/iterations:1                 662041 ns       662000 ns            1
+BM_Spdlog_Memory/iterations:1                    1485375 ns      1483000 ns            1
+YourLogger: Processed 1000000 messages in 117ms
+YourLogger: Processed 1000000 messages in 118ms
+YourLogger: Processed 1000000 messages in 118ms
+BM_YourLogger_Stability/iterations:3               0.118 s         0.118 s             3
+Spdlog: Processed 1000000 messages in 229ms
+Spdlog: Processed 1000000 messages in 230ms
+Spdlog: Processed 1000000 messages in 228ms
+BM_Spdlog_Stability/iterations:3                   0.229 s         0.197 s             3
+BM_YourLogger_LargePayload/1024/1000               0.225 ms        0.200 ms         3412 bytes_per_second=4.75846Gi/s
+BM_YourLogger_LargePayload/8192/1000                1.01 ms        0.766 ms          991 bytes_per_second=9.96516Gi/s
+BM_YourLogger_LargePayload/16384/500               0.853 ms        0.616 ms         1087 bytes_per_second=12.3777Gi/s
+BM_YourLogger_LargePayload/65536/100               0.857 ms        0.552 ms         1000 bytes_per_second=11.0573Gi/s
+BM_Spdlog_LargePayload/1024/1000                    1.19 ms        0.922 ms          817 bytes_per_second=1.03399Gi/s
+BM_Spdlog_LargePayload/8192/1000                    6.57 ms         5.32 ms          100 bytes_per_second=1.43489Gi/s
+BM_Spdlog_LargePayload/16384/500                    4.52 ms         4.51 ms          152 bytes_per_second=1.6913Gi/s
+BM_Spdlog_LargePayload/65536/100                    3.75 ms         3.75 ms          179 bytes_per_second=1.62923Gi/s
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+BM_YourLogger_Extreme/8/10000/1024/threads:8       0.012 s         0.004 s           152 bytes_per_second=2.28629Gi/s
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+BM_YourLogger_Extreme/8/10000/1024/threads:16      0.025 s         0.005 s           144 bytes_per_second=2.04981Gi/s
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+BM_YourLogger_Extreme/8/10000/1024/threads:32      0.051 s         0.006 s           160 bytes_per_second=1.65901Gi/s
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+BM_YourLogger_Extreme/16/5000/2048/threads:8       0.011 s         0.003 s           240 bytes_per_second=3.28512Gi/s
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+BM_YourLogger_Extreme/16/5000/2048/threads:16      0.021 s         0.003 s           224 bytes_per_second=2.84342Gi/s
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+BM_YourLogger_Extreme/16/5000/2048/threads:32      0.043 s         0.005 s           160 bytes_per_second=2.1186Gi/s
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+BM_YourLogger_Extreme/32/1000/4096/threads:8       0.004 s         0.001 s           784 bytes_per_second=4.1558Gi/s
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+BM_YourLogger_Extreme/32/1000/4096/threads:16      0.009 s         0.001 s           576 bytes_per_second=3.38152Gi/s
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+BM_YourLogger_Extreme/32/1000/4096/threads:32      0.014 s         0.001 s           320 bytes_per_second=2.86351Gi/s
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+BM_Spdlog_Extreme/8/10000/1024/threads:8           0.216 s         0.056 s            16 bytes_per_second=173.414Mi/s
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+BM_Spdlog_Extreme/8/10000/1024/threads:16          0.444 s         0.058 s            16 bytes_per_second=167.621Mi/s
+Extreme test: 8 threads, 10000 messages/thread, 1024 bytes/message
+BM_Spdlog_Extreme/8/10000/1024/threads:32          0.866 s         0.056 s            32 bytes_per_second=173.804Mi/s
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+BM_Spdlog_Extreme/16/5000/2048/threads:8           0.122 s         0.022 s            32 bytes_per_second=437.278Mi/s
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+BM_Spdlog_Extreme/16/5000/2048/threads:16          0.237 s         0.022 s            16 bytes_per_second=435.891Mi/s
+Extreme test: 16 threads, 5000 messages/thread, 2048 bytes/message
+BM_Spdlog_Extreme/16/5000/2048/threads:32          0.505 s         0.023 s            32 bytes_per_second=428.862Mi/s
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+BM_Spdlog_Extreme/32/1000/4096/threads:8           0.033 s         0.005 s            80 bytes_per_second=845.877Mi/s
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+BM_Spdlog_Extreme/32/1000/4096/threads:16          0.078 s         0.005 s           128 bytes_per_second=826.843Mi/s
+Extreme test: 32 threads, 1000 messages/thread, 4096 bytes/message
+BM_Spdlog_Extreme/32/1000/4096/threads:32          0.103 s         0.005 s            32 bytes_per_second=807.582Mi/s
