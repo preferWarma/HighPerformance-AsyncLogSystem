@@ -36,6 +36,18 @@ add_executable(log_benchmark log_benchmark.cpp)
 target_include_directories(log_benchmark PRIVATE ${PROJECT_SOURCE_DIR}/include ${CURL_INCLUDE_DIRS})
 target_link_libraries(log_benchmark PRIVATE benchmark::benchmark pthread ${CURL_LIBRARIES})
 
+# 格式化性能对比测试
+add_executable(format_benchmark format_benchmark.cpp)
+target_include_directories(format_benchmark PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(format_benchmark PRIVATE benchmark::benchmark pthread)
+
+# 检查并链接 fmt 库（如果可用）
+find_package(fmt QUIET)
+if(fmt_FOUND)
+    target_link_libraries(format_benchmark PRIVATE fmt::fmt)
+    target_compile_definitions(format_benchmark PRIVATE HAS_FMT_LIBRARY=1)
+endif()
+
 # 和 spdlog 对比
 find_package(spdlog REQUIRED)
 add_executable(comparison_spdlog comparison_with_spdlog.cpp)

@@ -1,10 +1,13 @@
 #pragma once
 
-#include <string>
-#include <string_view>
+#include <array>
 #include <charconv>
 #include <cstring>
+#include <iostream>
+#include <string>
+#include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace lyf {
 
@@ -15,203 +18,340 @@ namespace lyf {
 // 2. 最小化内存分配
 // 3. 优化的类型转换
 // 4. 内联友好
+// 5. 支持编译期格式化
 // ============================================================
 
 namespace detail {
 
-// ---------- 整数转字符串（最快路径） ----------
-template<typename T>
-inline size_t int_to_chars(char* buffer, size_t size, T value) {
-    if constexpr (std::is_integral_v<T>) {
-        // 使用 std::to_chars (C++17)
-        auto [ptr, ec] = std::to_chars(buffer, buffer + size, value);
-        return (ec == std::errc{}) ? (ptr - buffer) : 0;
-    }
-    return 0;
-}
-
-// ---------- 浮点数转字符串 ----------
-inline size_t float_to_chars(char* buffer, size_t size, double value) {
-#if __cpp_lib_to_chars >= 201611L && !defined(__APPLE__)
-    // 完整的 to_chars 支持（某些编译器可能不支持浮点数）
+// ---------- 高性能类型转换工具 ----------
+template <typename T>
+inline size_t int_to_chars(char *buffer, size_t size, T value) {
+  if constexpr (std::is_integral_v<T>) {
     auto [ptr, ec] = std::to_chars(buffer, buffer + size, value);
     return (ec == std::errc{}) ? (ptr - buffer) : 0;
+  }
+  return 0;
+}
+
+inline size_t float_to_chars(char *buffer, size_t size, double value) {
+#if _LIBCPP_STD_VER >= 17
+  auto [ptr, ec] = std::to_chars(buffer, buffer + size, value);
+  return (ec == std::errc{}) ? (ptr - buffer) : 0;
 #else
-    // 回退到 snprintf
-    int ret = std::snprintf(buffer, size, "%.6g", value);
-    return (ret > 0 && ret < static_cast<int>(size)) ? ret : 0;
+  int ret = std::snprintf(buffer, size, "%.6g", value);
+  return (ret > 0 && ret < static_cast<int>(size)) ? ret : 0;
 #endif
 }
 
-// ---------- 指针转字符串 ----------
-inline size_t ptr_to_chars(char* buffer, size_t size, const void* ptr) {
-    // 格式化为 0x 开头的十六进制
-    if (size < 3) return 0;
-    
-    buffer[0] = '0';
-    buffer[1] = 'x';
-    
-    uintptr_t value = reinterpret_cast<uintptr_t>(ptr);
-    auto [end, ec] = std::to_chars(buffer + 2, buffer + size, value, 16);
-    return (ec == std::errc{}) ? (end - buffer) : 0;
+inline size_t bool_to_chars(char *buffer, size_t size, bool value) {
+  constexpr const char *true_str = "true";
+  constexpr const char *false_str = "false";
+  const char *str = value ? true_str : false_str;
+  size_t len = value ? 4 : 5;
+
+  if (len <= size) {
+    std::memcpy(buffer, str, len);
+    return len;
+  }
+  return 0;
 }
 
-// ---------- 布尔转字符串 ----------
-inline size_t bool_to_chars(char* buffer, size_t size, bool value) {
-    constexpr const char* true_str = "true";
-    constexpr const char* false_str = "false";
-    const char* str = value ? true_str : false_str;
-    size_t len = value ? 4 : 5;
-    
-    if (len <= size) {
-        std::memcpy(buffer, str, len);
-        return len;
-    }
+inline size_t ptr_to_chars(char *buffer, size_t size, const void *ptr) {
+  if (size < 3)
     return 0;
+
+  buffer[0] = '0';
+  buffer[1] = 'x';
+
+  uintptr_t value = reinterpret_cast<uintptr_t>(ptr);
+  auto [end, ec] = std::to_chars(buffer + 2, buffer + size, value, 16);
+  return (ec == std::errc{}) ? (end - buffer) : 0;
 }
 
-// ---------- 通用 Appender：根据类型选择最优路径 ----------
-template<typename T>
-struct Appender {
-    static void append(std::string& out, T&& value) {
-        using DecayT = std::decay_t<T>;
-        
-        // 预分配空间（避免多次重分配）
-        constexpr size_t TEMP_SIZE = 32;
-        size_t old_size = out.size();
-        out.resize(old_size + TEMP_SIZE);
-        
-        char* buffer = out.data() + old_size;
-        size_t written = 0;
-        
-        // 根据类型选择最优转换
-        if constexpr (std::is_same_v<DecayT, bool>) {
-            written = bool_to_chars(buffer, TEMP_SIZE, value);
-        }
-        else if constexpr (std::is_integral_v<DecayT>) {
-            written = int_to_chars(buffer, TEMP_SIZE, value);
-        }
-        else if constexpr (std::is_floating_point_v<DecayT>) {
-            written = float_to_chars(buffer, TEMP_SIZE, static_cast<double>(value));
-        }
-        else if constexpr (std::is_pointer_v<DecayT>) {
-            if (value) {
-                written = ptr_to_chars(buffer, TEMP_SIZE, value);
-            } else {
-                constexpr const char null_str[] = "nullptr";
-                written = sizeof(null_str) - 1;
-                std::memcpy(buffer, null_str, written);
-            }
-        }
-        else if constexpr (std::is_same_v<DecayT, const char*>) {
-            // 字符串特殊处理
-            out.resize(old_size);  // 先恢复大小
-            if (value) {
-                out.append(value);
-            } else {
-                out.append("(null)");
-            }
-            return;
-        }
-        else if constexpr (std::is_same_v<DecayT, std::string> || 
-                          std::is_same_v<DecayT, std::string_view>) {
-            out.resize(old_size);  // 先恢复大小
-            out.append(value);
-            return;
-        }
-        else if constexpr (std::is_same_v<DecayT, char>) {
-            out.resize(old_size);
-            out.push_back(value);
-            return;
-        }
-        else {
-            // 其他类型，尝试 ADL 查找 to_string
-            out.resize(old_size);
-            using std::to_string;  // 启用 ADL
-            out.append(to_string(std::forward<T>(value)));
-            return;
-        }
-        
-        // 调整到实际大小
-        out.resize(old_size + written);
+// ---------- 通用高性能 Appender ----------
+template <typename T> struct FastAppender {
+  static void append(std::string &out, T &&value) {
+    using DecayT = std::decay_t<T>;
+
+    constexpr size_t TEMP_SIZE = 32;
+    size_t old_size = out.size();
+    out.resize(old_size + TEMP_SIZE);
+
+    char *buffer = out.data() + old_size;
+    size_t written = 0;
+
+    if constexpr (std::is_same_v<DecayT, bool>) {
+      written = bool_to_chars(buffer, TEMP_SIZE, value);
+    } else if constexpr (std::is_integral_v<DecayT>) {
+      written = int_to_chars(buffer, TEMP_SIZE, value);
+    } else if constexpr (std::is_floating_point_v<DecayT>) {
+      written = float_to_chars(buffer, TEMP_SIZE, static_cast<double>(value));
+    } else if constexpr (std::is_same_v<DecayT, std::string> ||
+                         std::is_same_v<DecayT, std::string_view>) {
+      out.resize(old_size);
+      out.append(value);
+      return;
+    } else if constexpr (std::is_same_v<DecayT, const char *> ||
+                         std::is_same_v<DecayT, char *>) {
+      out.resize(old_size);
+      if (value)
+        out.append(value);
+      else
+        out.append("(null)");
+      return;
+    } else if constexpr (std::is_pointer_v<DecayT>) {
+      if (value)
+        written = ptr_to_chars(buffer, TEMP_SIZE, value);
+      else {
+        constexpr const char null_str[] = "nullptr";
+        written = sizeof(null_str) - 1;
+        std::memcpy(buffer, null_str, written);
+      }
+    } else if constexpr (std::is_same_v<DecayT, char>) {
+      out.resize(old_size);
+      out.push_back(value);
+      return;
+    } else {
+      out.resize(old_size);
+      using std::to_string;
+      out.append(to_string(std::forward<T>(value)));
+      return;
     }
+
+    out.resize(old_size + written);
+  }
 };
 
-// ---------- 占位符查找优化 ----------
+} // namespace detail
+
+// ============================================================
+// 运行时格式化实现
+// ============================================================
+
+namespace detail {
+
 inline size_t find_placeholder(std::string_view str, size_t start = 0) {
-    // 优化：减少 find 调用
-    for (size_t i = start; i < str.size() - 1; ++i) {
-        if (str[i] == '{' && str[i + 1] == '}') {
-            return i;
-        }
+  for (size_t i = start; i < str.size() - 1; ++i) {
+    if (str[i] == '{' && str[i + 1] == '}') {
+      return i;
     }
-    return std::string_view::npos;
+  }
+  return std::string_view::npos;
 }
 
-// ---------- 格式化核心实现 ----------
-template<typename... Args, size_t... Is>
-inline void format_impl(std::string& result, 
-                       std::string_view fmt,
-                       std::index_sequence<Is...>,
-                       Args&&... args) {
-    size_t pos = 0;
-    size_t arg_index = 0;
-    
-    // 使用折叠表达式处理每个参数
-    auto process_arg = [&](auto&& arg) {
-        size_t placeholder = find_placeholder(fmt, pos);
-        if (placeholder != std::string_view::npos) {
-            // 添加占位符前的文本
-            if (placeholder > pos) {
-                result.append(fmt.data() + pos, placeholder - pos);
-            }
-            // 添加参数
-            Appender<decltype(arg)>::append(result, std::forward<decltype(arg)>(arg));
-            pos = placeholder + 2;
-        }
-        ++arg_index;
-    };
-    
-    (process_arg(std::forward<Args>(args)), ...);
-    
-    // 添加剩余的格式字符串
-    if (pos < fmt.size()) {
-        result.append(fmt.data() + pos, fmt.size() - pos);
+template <typename... Args, size_t... Is>
+inline void format_impl(std::string &result, std::string_view fmt,
+                        std::index_sequence<Is...>, Args &&...args) {
+  size_t pos = 0;
+
+  auto process_arg = [&](auto &&arg) {
+    size_t placeholder = find_placeholder(fmt, pos);
+    if (placeholder != std::string_view::npos) {
+      if (placeholder > pos) { // 处理占位符前的字面量
+        result.append(fmt.data() + pos, placeholder - pos);
+      }
+      detail::FastAppender<decltype(arg)>::append(
+          result, std::forward<decltype(arg)>(arg));
+      pos = placeholder + 2;
     }
+  };
+
+  (process_arg(std::forward<Args>(args)), ...);
+
+  if (pos < fmt.size()) { // 处理占位符后的字面量
+    result.append(fmt.data() + pos, fmt.size() - pos);
+  }
+}
+
+} // namespace detail
+
+#if _LIBCPP_STD_VER >= 20
+
+// ============================================================
+// 编译期格式化实现
+// ============================================================
+
+// 编译期字符串容器
+template <size_t N> struct FixedString {
+  char data[N + 1] = {};
+  size_t len = N;
+
+  constexpr FixedString() = default;
+  constexpr FixedString(const char (&str)[N + 1]) {
+    for (size_t i = 0; i < N; ++i) {
+      data[i] = str[i];
+    }
+    data[N] = '\0';
+    len = N;
+  }
+
+  constexpr std::string_view view() const {
+    return std::string_view(data, len);
+  }
+
+  constexpr const char *c_str() const { return data; }
+  constexpr size_t size() const { return len; }
+};
+
+// 编译期字符串字面量推导
+template <size_t N> FixedString(const char (&)[N]) -> FixedString<N - 1>;
+
+// 编译期格式解析器
+template <size_t N> struct FormatInfo {
+  static constexpr size_t MAX_ARGS = 32;
+
+  FixedString<N> format;
+  std::array<size_t, MAX_ARGS> literal_starts = {}; // 每个字面量段的起始位置
+  std::array<size_t, MAX_ARGS> literal_lengths = {}; // 每个字面量段的长度
+  size_t arg_count = 0;                              // 占位符数量
+  size_t literal_count = 0;                          // 字面量段数量
+
+  constexpr FormatInfo(const char (&fmt)[N + 1]) : format(fmt) { parse(); }
+
+private:
+  constexpr void parse() {
+    size_t literal_start = 0;
+
+    for (size_t i = 0; i < N; ++i) {
+      if (i < N - 1 && format.data[i] == '{' && format.data[i + 1] == '}') {
+        if (i > literal_start) {
+          literal_starts[literal_count] = literal_start;
+          literal_lengths[literal_count] = i - literal_start;
+          literal_count++;
+        }
+        arg_count++;
+        i++;
+        literal_start = i + 1;
+      }
+    }
+
+    if (literal_start < N) {
+      literal_starts[literal_count] = literal_start;
+      literal_lengths[literal_count] = N - literal_start;
+      literal_count++;
+    }
+  }
+};
+
+// 编译期格式化核心实现
+namespace detail {
+
+template <FormatInfo Info, typename... Args>
+std::string format_compile_impl(Args &&...args) {
+  static_assert(Info.arg_count == sizeof...(args),
+                "Number of arguments doesn't match format string placeholders");
+
+  std::string result;
+  size_t estimated_size = Info.format.size() + sizeof...(args) * 10;
+  result.reserve(estimated_size);
+
+  size_t literal_index = 0;
+
+  auto write_next_arg = [&](auto &&arg) {
+    // 1: 写入当前参数前的字面量
+    if (literal_index < Info.literal_count) {
+      size_t start = Info.literal_starts[literal_index];
+      size_t len = Info.literal_lengths[literal_index];
+      if (len > 0) {
+        result.append(Info.format.data + start, len);
+      }
+      literal_index++;
+    }
+    // 2: 写入当前参数
+    detail::FastAppender<decltype(arg)>::append(
+        result, std::forward<decltype(arg)>(arg));
+  };
+
+  (write_next_arg(std::forward<Args>(args)), ...);
+
+  // 3: 写入最后一个字面量
+  while (literal_index < Info.literal_count) {
+    size_t start = Info.literal_starts[literal_index];
+    size_t len = Info.literal_lengths[literal_index];
+    if (len > 0) {
+      result.append(Info.format.data + start, len);
+    }
+    literal_index++;
+  }
+
+  return result;
 }
 
 } // namespace detail
 
 // ============================================================
-// 主要接口
+// 编译期格式化接口
 // ============================================================
 
-// 高性能格式化函数（主接口）
-template<typename... Args>
-[[nodiscard]] inline std::string FormatMessage(std::string_view fmt, Args&&... args) {
-    // 无参数快速路径
-    if constexpr (sizeof...(args) == 0) {
-        return std::string(fmt);
-    }
-    
-    // 预估结果大小（启发式）
-    // 格式字符串长度 + 每个参数平均 8 字符
-    size_t estimated_size = fmt.size() + sizeof...(args) * 8;
-    
-    std::string result;
-    result.reserve(estimated_size);
-    
-    detail::format_impl(result, fmt, 
-                       std::index_sequence_for<Args...>{},
-                       std::forward<Args>(args)...);
-    
-    return result;
+template <FixedString fmt> struct CompileFormat {
+  static constexpr auto info = FormatInfo<fmt.len>(fmt.data);
+
+  template <typename... Args> std::string operator()(Args &&...args) const {
+    return detail::format_compile_impl<info>(std::forward<Args>(args)...);
+  }
+};
+
+// 用户定义字面量
+template <FixedString fmt> constexpr auto operator""_fmt() {
+  return CompileFormat<fmt>{};
 }
 
-// 兼容旧接口（接受 std::string）
-template<typename... Args>
-[[nodiscard]] inline std::string FormatMessage(const std::string& fmt, Args&&... args) {
-    return FormatMessage(std::string_view(fmt), std::forward<Args>(args)...);
+// 宏接口
+#define FMT(str)                                                               \
+  lyf::CompileFormat<lyf::FixedString(str)> {}
+
+#endif
+
+// ============================================================
+// 统一接口
+// ============================================================
+
+// 运行时格式化（主接口）
+template <typename... Args>
+[[nodiscard]] inline std::string FormatMessage(std::string_view fmt,
+                                               Args &&...args) {
+  if constexpr (sizeof...(args) == 0) {
+    return std::string(fmt);
+  }
+
+  size_t estimated_size = fmt.size() + sizeof...(args) * 8;
+  std::string result;
+  result.reserve(estimated_size);
+
+  detail::format_impl(result, fmt, std::index_sequence_for<Args...>{},
+                      std::forward<Args>(args)...);
+
+  return result;
 }
+
+#if _LIBCPP_STD_VER >= 20
+// 编译期格式化（统一接口）
+template <FixedString fmt, typename... Args>
+[[nodiscard]] inline std::string FormatMessage(Args &&...args) {
+  if constexpr (sizeof...(args) == 0) {
+    return std::string(fmt.c_str(), fmt.size());
+  }
+  return CompileFormat<fmt>{}(std::forward<Args>(args)...);
+}
+#endif
+
+// ============================================================
+// 使用示例
+// ============================================================
+
+/*
+// 运行时格式化
+auto rt = FormatMessage("Value: {}", 42);
+
+// 编译期格式化（方法1：使用字面量）
+constexpr auto fmt = "Value: {}"_fmt;
+auto ct1 = fmt(42);
+
+// 编译期格式化（方法2：使用宏）
+auto ct2 = FMT("Value: {}")(42);
+
+// 编译期格式化（方法3：使用模板参数）
+auto ct3 = FormatMessage<"Value: {}">(42);
+*/
 
 } // namespace lyf
