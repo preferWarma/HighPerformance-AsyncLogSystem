@@ -3,7 +3,7 @@
 #include <array>
 #include <charconv>
 #include <cstring>
-#include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -73,53 +73,58 @@ template <typename T> struct FastAppender {
   static void append(std::string &out, T &&value) {
     using DecayT = std::decay_t<T>;
 
-    constexpr size_t TEMP_SIZE = 32;
-    size_t old_size = out.size();
-    out.resize(old_size + TEMP_SIZE);
-
-    char *buffer = out.data() + old_size;
-    size_t written = 0;
-
-    if constexpr (std::is_same_v<DecayT, bool>) {
-      written = bool_to_chars(buffer, TEMP_SIZE, value);
-    } else if constexpr (std::is_integral_v<DecayT>) {
-      written = int_to_chars(buffer, TEMP_SIZE, value);
-    } else if constexpr (std::is_floating_point_v<DecayT>) {
-      written = float_to_chars(buffer, TEMP_SIZE, static_cast<double>(value));
-    } else if constexpr (std::is_same_v<DecayT, std::string> ||
-                         std::is_same_v<DecayT, std::string_view>) {
-      out.resize(old_size);
+    if constexpr (std::is_same_v<DecayT, std::string> ||
+                  std::is_same_v<DecayT, std::string_view>) {
       out.append(value);
-      return;
     } else if constexpr (std::is_same_v<DecayT, const char *> ||
                          std::is_same_v<DecayT, char *>) {
-      out.resize(old_size);
       if (value)
         out.append(value);
       else
         out.append("(null)");
-      return;
-    } else if constexpr (std::is_pointer_v<DecayT>) {
-      if (value)
-        written = ptr_to_chars(buffer, TEMP_SIZE, value);
-      else {
-        constexpr const char null_str[] = "nullptr";
-        written = sizeof(null_str) - 1;
-        std::memcpy(buffer, null_str, written);
-      }
     } else if constexpr (std::is_same_v<DecayT, char>) {
-      out.resize(old_size);
       out.push_back(value);
-      return;
     } else {
-      out.resize(old_size);
-      using std::to_string;
-      out.append(to_string(std::forward<T>(value)));
-      return;
-    }
+      // SSO思想：对于数值、指针、布尔等类型，使用栈上缓冲区转换
+      char buffer[32]; // 短字符串采用栈上缓冲区
+      size_t written = 0;
 
-    out.resize(old_size + written);
-  }
+      if constexpr (std::is_same_v<DecayT, bool>) {
+        written = bool_to_chars(buffer, sizeof(buffer), value);
+      } else if constexpr (std::is_integral_v<DecayT>) {
+        written = int_to_chars(buffer, sizeof(buffer), value);
+      } else if constexpr (std::is_floating_point_v<DecayT>) {
+        written =
+            float_to_chars(buffer, sizeof(buffer), static_cast<double>(value));
+      } else if constexpr (std::is_pointer_v<DecayT> ||
+                           std::is_same_v<DecayT, std::nullptr_t>) {
+        if (value)
+          written = ptr_to_chars(buffer, sizeof(buffer), value);
+        else {
+          constexpr const char null_str[] = "nullptr";
+          written = sizeof(null_str) - 1;
+          std::memcpy(buffer, null_str, written);
+        }
+      }
+
+      [[likely]] if (written > 0) {
+        out.append(buffer, written);
+      } else if constexpr (std::is_pointer_v<DecayT> ||
+                           std::is_same_v<DecayT, std::nullptr_t>) {
+        int ret = std::snprintf(buffer, sizeof(buffer), "%p", value);
+        if (ret > 0 && ret < static_cast<int>(sizeof(buffer))) {
+          out.append(buffer, ret);
+        } else { // 兜底
+          std::stringstream ss;
+          ss << value;
+          out.append(ss.str());
+        }
+      } else {
+        // 对其他类型使用 to_string。
+        out.append(std::to_string(std::forward<T>(value)));
+      }
+    }
+  };
 };
 
 } // namespace detail

@@ -43,6 +43,7 @@ target_link_libraries(format_benchmark PRIVATE benchmark::benchmark pthread)
 
 # 检查并链接 fmt 库（如果可用）
 find_package(fmt QUIET)
+
 if(fmt_FOUND)
     target_link_libraries(format_benchmark PRIVATE fmt::fmt)
     target_compile_definitions(format_benchmark PRIVATE HAS_FMT_LIBRARY=1)
@@ -50,6 +51,10 @@ endif()
 
 # 和 spdlog 对比
 find_package(spdlog REQUIRED)
-add_executable(comparison_spdlog comparison_with_spdlog.cpp)
+add_executable(comparison_spdlog comparison_spdlog.cpp)
 target_include_directories(comparison_spdlog PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(comparison_spdlog PRIVATE benchmark::benchmark pthread spdlog::spdlog)
+
+add_executable(comparison_my_logger comparison_mylogger.cpp)
+target_include_directories(comparison_my_logger PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(comparison_my_logger PRIVATE benchmark::benchmark pthread)
