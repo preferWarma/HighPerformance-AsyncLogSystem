@@ -1,7 +1,7 @@
 {
     "basic": {
-        "maxConsoleLogQueueSize": 1000,
-        "maxFileLogQueueSize": 2000
+        "maxConsoleLogQueueSize": 4096,
+        "maxFileLogQueueSize": 8192
     },
     "output": {
         "logRootDir": "./logs",
@@ -11,10 +11,12 @@
     },
     "performance": {
         "enableAsyncConsole": true,
-        "consoleFlushInterval_ms": 500,
-        "fileFlushInterval_ms": 1000,
-        "consoleBatchSize": 100,
-        "fileBatchSize": 200
+        "consoleFlushInterval_ms": 50,
+        "fileFlushInterval_ms": 100,
+        "consoleBatchSize": 512,
+        "fileBatchSize": 1024,
+        "consoleBufferSize_kb": 16,
+        "fileBufferSize_kb": 32
     },
     "rotation": {
         "maxLogFileSize": 10485760,

@@ -22,7 +22,7 @@ struct Config : Singleton<Config> {
     string logRootDir; // 日志根目录
     bool toFile;       // 是否输出到文件
     bool toConsole;    // 是否输出到控制台
-    int minLogLevel;   // 最小日志级别(0:DEBUG,1:INFO,2:WARNING,3:ERROR,4:FATAL)
+    int minLogLevel; // 最小日志级别(0:DEBUG,1:INFO,2:WARNING,3:ERROR,4:FATAL)
   } output;
 
   struct PerformanceConfig {
@@ -31,6 +31,8 @@ struct Config : Singleton<Config> {
     size_t fileBatchSize;              // 文件大批次
     milliseconds consoleFlushInterval; // 控制台刷新间隔
     milliseconds fileFlushInterval;    // 文件刷新间隔
+    size_t consoleBufferSize_kb;       // 控制台预分配缓冲区大小
+    size_t fileBufferSize_kb;          // 文件预分配缓冲区大小
   } performance;
 
   struct RotationConfig {
@@ -77,6 +79,10 @@ struct Config : Singleton<Config> {
           milliseconds(helper.Get<int>("performance.fileFlushInterval_ms"));
       performance.enableAsyncConsole =
           helper.Get<bool>("performance.enableAsyncConsole");
+      performance.consoleBufferSize_kb =
+          helper.Get<int>("performance.consoleBufferSize_kb");
+      performance.fileBufferSize_kb =
+          helper.Get<int>("performance.fileBufferSize_kb");
     }
 
     { // rotation config

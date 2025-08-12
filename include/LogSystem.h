@@ -556,7 +556,8 @@ inline void AsyncLogSystem::cleanupOldLogFiles() {
 inline void AsyncLogSystem::ConsoleWorkerLoop() {
   LogQueue::QueueType batchQueue; // 当前批次的日志消息队列
   std::string buffer;
-  buffer.reserve(1024 * 16); // 预分配16KB缓冲区
+  buffer.reserve(1024 *
+                 config_.performance.consoleBufferSize_kb); // 预分配缓冲区
 
   auto work = [&]() {
     ProcessConsoleBatch(batchQueue, buffer);
@@ -581,7 +582,7 @@ inline void AsyncLogSystem::ConsoleWorkerLoop() {
 inline void AsyncLogSystem::FileWorkerLoop() {
   LogQueue::QueueType batchQueue; // 当前批次的日志消息队列
   std::string buffer;
-  buffer.reserve(1024 * 64); // 预分配64KB缓冲区
+  buffer.reserve(1024 * config_.performance.fileBufferSize_kb); // 预分配缓冲区
 
   auto work = [&]() {
     ProcessFileBatch(batchQueue, buffer);

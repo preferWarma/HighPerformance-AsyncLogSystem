@@ -3,6 +3,44 @@
 #include <benchmark/benchmark.h>
 #include <vector>
 
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <sys/types.h>
+#include <unistd.h>
+#elif __linux__
+#include <fstream>
+#endif
+
+void PrintMemoryUsage(const std::string &label) {
+#ifdef __APPLE__
+  task_t task = mach_task_self();
+  struct task_basic_info info;
+  mach_msg_type_number_t size = TASK_BASIC_INFO_COUNT;
+  kern_return_t kerr =
+      task_info(task, TASK_BASIC_INFO, (task_info_t)&info, &size);
+
+  if (kerr == KERN_SUCCESS) {
+    double memory_mb =
+        static_cast<double>(info.resident_size) / 1024.0 / 1024.0;
+    std::cout << label << " - Memory: " << memory_mb << " MB (resident)"
+              << std::endl;
+  } else {
+    std::cout << label << " - Memory: Unable to get memory info" << std::endl;
+  }
+#elif __linux__
+  std::ifstream status("/proc/self/status");
+  std::string line;
+  while (std::getline(status, line)) {
+    if (line.find("VmRSS:") == 0) {
+      std::cout << label << " - " << line << std::endl;
+      break;
+    }
+  }
+#else
+  std::cout << label << " - Memory: Unsupported platform" << std::endl;
+#endif
+}
+
 using namespace lyf;
 
 // -------------------------------
@@ -73,8 +111,8 @@ protected:
   std::string logDir;
 };
 
-BENCHMARK_DEFINE_F(MultiThreadFixture,
-                   BM_MultiThread)(benchmark::State &state) {
+BENCHMARK_DEFINE_F(MultiThreadFixture, BM_MultiThread)
+(benchmark::State &state) {
   const size_t kMsgPerThread = 10000;
   for (auto _ : state) {
     for (size_t i = 0; i < kMsgPerThread; ++i) {
@@ -142,7 +180,7 @@ static void BM_FileRotation(benchmark::State &state) {
 
   TearDownTest(logDir);
 }
-BENCHMARK(BM_FileRotation)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_FileRotation);
 
 // -------------------------------
 // 内存压力（持续写入）
@@ -151,16 +189,20 @@ class MemoryPressureFixture : public benchmark::Fixture {
 public:
   void SetUp(const ::benchmark::State &state) override {
     if (state.thread_index() == 0) {
+      PrintMemoryUsage("Before Init");
       logDir = "bench_memory";
       SetUpTest(logDir);
       AsyncLogSystem::GetInstance().Init();
+      PrintMemoryUsage("After Init");
     }
   }
 
   void TearDown(const ::benchmark::State &state) override {
     if (state.thread_index() == 0) {
+      PrintMemoryUsage("Before Stop");
       AsyncLogSystem::GetInstance().Stop();
       TearDownTest(logDir);
+      PrintMemoryUsage("After Stop");
     }
   }
 
@@ -183,7 +225,6 @@ BENCHMARK_DEFINE_F(MemoryPressureFixture, BM_MemoryPressure)
 }
 BENCHMARK_REGISTER_F(MemoryPressureFixture, BM_MemoryPressure)
     ->Threads(4) // Keep the original 4 threads
-    ->Unit(benchmark::kMillisecond)
     ->UseRealTime();
 
 // Google Benchmark 主入口
