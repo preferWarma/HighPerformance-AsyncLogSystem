@@ -46,25 +46,20 @@ void PrintMemoryUsage(const std::string &label) {
 #endif
 }
 
-// ============================================================
-// Base Fixture for All Logger Benchmarks
-// ============================================================
 class LoggerBenchmark : public benchmark::Fixture {
 public:
   void SetUp(const ::benchmark::State &state) override {
-    // Create directories for logs before any test runs
-    std::filesystem::create_directory("./bench_spdlog");
+    std::filesystem::create_directory(log_dir);
   }
 
   void TearDown(const ::benchmark::State &state) override {
-    // Optional: Clean up log directories after all tests are done
-    // std::filesystem::remove_all("./bench_spdlog");
+    std::filesystem::remove_all(log_dir);
   }
+
+protected:
+  std::string log_dir = "./bench_spdlog";
 };
 
-// ============================================================
-// Fixture for Spdlog Asynchronous Logger
-// ============================================================
 class SpdlogFixture : public LoggerBenchmark {
 public:
   void SetUp(const ::benchmark::State &state) override {
@@ -73,46 +68,43 @@ public:
       if (name.find("threads:") == std::string::npos) {
         name += "/threads:" + std::to_string(state.threads());
       }
-      PrintMemoryUsage("Before " + name);
+      PrintMemoryUsage("Before spdlog init " + name);
       LoggerBenchmark::SetUp(state);
-      // Ensure a clean state from any previous runs that might have failed.
-      spdlog::shutdown();
-      spdlog::drop_all();
-
-      // This setup is more robust for repeated runs within the same process
-      spdlog::init_thread_pool(81920, 1); // Match queue size
+      spdlog::shutdown(); // Clean up previous state
+      spdlog::init_thread_pool(81920, 1);
       auto logger = spdlog::basic_logger_mt<spdlog::async_factory>(
-          "async_logger", "./bench_spdlog/log.txt", true /* truncate */);
-      logger->set_level(spdlog::level::debug);
-      logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
+          "async_logger", log_dir + "/log.txt", true /* truncate */);
       spdlog::set_default_logger(std::move(logger));
+      PrintMemoryUsage("After spdlog init " + name);
     }
   }
 
   void TearDown(const ::benchmark::State &state) override {
     if (state.thread_index() == 0) {
-      spdlog::shutdown();
-      spdlog::drop_all();
-      LoggerBenchmark::TearDown(state);
       std::string name = state.name();
       if (name.find("threads:") == std::string::npos) {
         name += "/threads:" + std::to_string(state.threads());
       }
-      PrintMemoryUsage("After " + name);
+      PrintMemoryUsage("Before spdlog shutdown " + name);
+      spdlog::shutdown();
+      LoggerBenchmark::TearDown(state);
+      PrintMemoryUsage("After spdlog shutdown " + name);
     }
   }
 };
 
 // ============================================================
-// 1. Throughput Test (Single and Multi-threaded)
+// 1. True Throughput Test (Single and Multi-threaded)
 // ============================================================
 BENCHMARK_F(SpdlogFixture, Throughput)(benchmark::State &state) {
+  constexpr int messages_per_iteration = 10000;
   for (auto _ : state) {
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < messages_per_iteration; ++i) {
       spdlog::info("Thread {} message {}", state.thread_index(), i);
     }
+    spdlog::default_logger()->flush();
   }
-  state.SetItemsProcessed(state.iterations() * 100);
+  state.SetItemsProcessed(state.iterations() * messages_per_iteration);
 }
 BENCHMARK_REGISTER_F(SpdlogFixture, Throughput)
     ->Threads(1)
@@ -126,7 +118,7 @@ BENCHMARK_REGISTER_F(SpdlogFixture, Throughput)
 BENCHMARK_F(SpdlogFixture, Latency)(benchmark::State &state) {
   for (auto _ : state) {
     auto start = std::chrono::high_resolution_clock::now();
-    spdlog::info("Latency test message");
+    spdlog::info("Latency test message {}", state.iterations());
     auto end = std::chrono::high_resolution_clock::now();
     state.SetIterationTime(std::chrono::duration<double>(end - start).count());
   }
@@ -136,40 +128,13 @@ BENCHMARK_REGISTER_F(SpdlogFixture, Latency)->UseManualTime();
 // ============================================================
 // 3. Formatting-Only Performance Test
 // ============================================================
-
-// A separate fixture for tests that don't need full logger setup
-class FormattingFixture : public benchmark::Fixture {
-public:
-  void SetUp(const ::benchmark::State &state) override {
-    if (state.thread_index() == 0) {
-      std::string name = state.name();
-      if (name.find("threads:") == std::string::npos) {
-        name += "/threads:" + std::to_string(state.threads());
-      }
-      PrintMemoryUsage("Before " + name);
-    }
-  }
-
-  void TearDown(const ::benchmark::State &state) override {
-    if (state.thread_index() == 0) {
-      std::string name = state.name();
-      if (name.find("threads:") == std::string::npos) {
-        name += "/threads:" + std::to_string(state.threads());
-      }
-      PrintMemoryUsage("After " + name);
-    }
-  }
-};
-
-BENCHMARK_F(FormattingFixture, Spdlog_Formatting)(benchmark::State &state) {
+BENCHMARK_F(SpdlogFixture, Formatting)(benchmark::State &state) {
   auto null_sink = std::make_shared<spdlog::sinks::null_sink_mt>();
   spdlog::logger logger("null_logger", null_sink);
-  logger.set_pattern("%v"); // Only format the message, no extra pattern
+  logger.set_pattern("%v");
 
   for (auto _ : state) {
     for (int i = 0; i < 100; ++i) {
-      // Using logger.info on a null_sink is a standard way to test formatting
-      // performance
       logger.info("Int: {}, Float: {}, String: {}, Bool: {}", i, 3.14159 * i,
                   "test string", i % 2 == 0);
     }
@@ -177,28 +142,21 @@ BENCHMARK_F(FormattingFixture, Spdlog_Formatting)(benchmark::State &state) {
   state.SetItemsProcessed(state.iterations() * 100);
 }
 
-// --- Spdlog Tests ---
-static void RunSpdlogPayload(benchmark::State &state, size_t messageSize) {
+// ============================================================
+// 4. Payload Performance Test
+// ============================================================
+BENCHMARK_DEFINE_F(SpdlogFixture, Payload)(benchmark::State &state) {
   const size_t messageCount = 1000;
-  std::string largeMessage(messageSize, 'X');
+  const size_t messageSize = state.range(0);
+  const std::string largeMessage(messageSize, 'X');
   for (auto _ : state) {
     for (size_t i = 0; i < messageCount; ++i) {
       spdlog::info("Large payload {}: {}", i, largeMessage);
     }
+    spdlog::default_logger()->flush();
   }
   state.SetBytesProcessed(state.iterations() * messageCount * messageSize);
 }
-
-BENCHMARK_F(SpdlogFixture, LargePayload_1KB)(benchmark::State &state) {
-  RunSpdlogPayload(state, 1024);
-}
-
-BENCHMARK_F(SpdlogFixture, LargePayload_8KB)(benchmark::State &state) {
-  RunSpdlogPayload(state, 8192);
-}
-
-BENCHMARK_F(SpdlogFixture, LargePayload_16KB)(benchmark::State &state) {
-  RunSpdlogPayload(state, 16384);
-}
+BENCHMARK_REGISTER_F(SpdlogFixture, Payload)->Range(1024, 1024 * 8);
 
 BENCHMARK_MAIN();

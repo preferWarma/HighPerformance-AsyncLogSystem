@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -179,8 +180,13 @@ private:
 private:
   std::ofstream logFile_;                      // 当前的日志文件输出流
   atomic<bool> isStop_{true};                  // 是否关闭
-  mutable mutex fileMtx_;                      // 用于文件操作的互斥锁
   steady_clock::time_point lastFileFlushTime_; // 上次文件刷新时间
+  mutable mutex fileMtx_;                      // 保证文件写入不会乱序
+  mutable std::mutex flushSerializerMtx_; // 保证刷新操作的原子性发起用于
+  mutable std::mutex flushMtx_;           //  完成等待 时的线程同步
+  std::condition_variable flushCv_; // 用于等待刷新完成的线程同步
+  std::atomic<int> flushRequestCount_{0}; // 刷新请求计数(console/file)
+  const std::string FLUSH_COMMAND_ = "__FLUSH_COMMAND__"; // 刷新命令
 
 private:
   thread consoleWorker_;            // 控制台输出线程
@@ -209,8 +215,8 @@ inline void AsyncLogSystem::Init() {
   if (!isStop_.exchange(false)) {
     return;
   }
-  consoleQue_ = make_unique<LogQueue>(config_.basic.maxConsoleLogQueueSize);
-  fileQue_ = make_unique<LogQueue>(config_.basic.maxFileLogQueueSize);
+  consoleQue_ = make_unique<LogQueue>(config_.basic.maxQueueSize);
+  fileQue_ = make_unique<LogQueue>(config_.basic.maxQueueSize);
   rotationType_ = RotationType::BY_SIZE_AND_TIME;
   lastFileFlushTime_ = std::chrono::steady_clock::now();
   rotateCounts_ = 0;
@@ -296,17 +302,33 @@ inline void AsyncLogSystem::Stop() {
 }
 
 inline void AsyncLogSystem::Flush() {
-  if (config_.output.toConsole) {
-    std::cout.flush();
+  std::lock_guard<std::mutex> serializer_lock(flushSerializerMtx_);
+  if (isStop_.load(std::memory_order_relaxed)) {
+    return;
   }
 
-  // 刷新日志文件
-  if (config_.output.toFile) {
-    lock_guard<mutex> lock(fileMtx_);
-    if (logFile_.is_open()) {
-      logFile_.flush();
-    }
+  std::unique_lock<std::mutex> flush_lock(flushMtx_);
+
+  int active_workers = 0;
+  LogMessage flush_cmd(LogLevel::INFO, FLUSH_COMMAND_);
+
+  if (config_.output.toConsole && consoleQue_) {
+    active_workers++;
+    consoleQue_->Push(flush_cmd);
   }
+  if (config_.output.toFile && fileQue_) {
+    active_workers++;
+    fileQue_->Push(flush_cmd);
+  }
+
+  if (active_workers == 0) {
+    return;
+  }
+
+  flushRequestCount_.store(active_workers);
+
+  // 等待所有工作线程处理完刷新命令
+  flushCv_.wait(flush_lock, [this] { return flushRequestCount_.load() == 0; });
 }
 
 template <typename... Args>
@@ -565,16 +587,21 @@ inline void AsyncLogSystem::ConsoleWorkerLoop() {
     buffer.clear();
   };
 
+  int sleepTime_ms = 1;
+
   while (!isStop_.load(std::memory_order_relaxed)) {
-    if (consoleQue_->PopAll(batchQueue) > 0) {
+    if (consoleQue_->PopBatch(batchQueue,
+                              config_.performance.consoleBatchSize) > 0) {
       work();
+      sleepTime_ms = 1;
     } else {
       // 队列为空，短暂休眠避免忙等待
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      std::this_thread::sleep_for(std::chrono::milliseconds(sleepTime_ms));
+      sleepTime_ms = std::min(100, sleepTime_ms * 2); // 指数退避算法
     }
   }
   // 处理剩余的日志消息
-  while (consoleQue_->PopAll(batchQueue) > 0) {
+  while (consoleQue_->PopBatch(batchQueue) > 0) {
     work();
   }
 }
@@ -590,16 +617,20 @@ inline void AsyncLogSystem::FileWorkerLoop() {
     buffer.clear();
   };
 
+  int sleepTime_ms = 1;
+
   while (!isStop_.load(std::memory_order_relaxed)) {
-    if (fileQue_->PopAll(batchQueue) > 0) {
+    if (fileQue_->PopBatch(batchQueue, config_.performance.fileBatchSize) > 0) {
       work();
+      sleepTime_ms = 1;
     } else {
       // 队列为空，短暂休眠避免忙等待
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      std::this_thread::sleep_for(std::chrono::milliseconds(sleepTime_ms));
+      sleepTime_ms = std::min(100, sleepTime_ms * 2); // 指数退避算法
     }
   }
   // 处理剩余的日志消息
-  while (fileQue_->PopAll(batchQueue) > 0) {
+  while (fileQue_->PopBatch(batchQueue) > 0) {
     work();
   }
 }
@@ -613,6 +644,24 @@ inline void AsyncLogSystem::ProcessConsoleBatch(LogQueue::QueueType &batchQueue,
   while (!batchQueue.empty()) {
     auto msg = std::move(batchQueue.front());
     batchQueue.pop_front();
+
+    // 刷新请求到来，立即刷新
+    if (msg.content == FLUSH_COMMAND_) {
+      if (!buffer.empty()) {
+        std::cout << buffer << std::flush;
+        buffer.clear();
+      } else {
+        std::cout.flush();
+      }
+      processedCount = 0;
+
+      if (flushRequestCount_.fetch_sub(1) == 1) {
+        // 刷新请求计数减到0，通知等待线程
+        lock_guard<mutex> cv_lock(flushMtx_);
+        flushCv_.notify_one();
+      }
+      continue;
+    }
 
     buffer += LevelColor(msg.level);
     buffer +=
@@ -654,6 +703,29 @@ inline void AsyncLogSystem::ProcessFileBatch(LogQueue::QueueType &batchQueue,
   };
 
   while (!batchQueue.empty()) {
+    // 刷新请求到来，立即刷新
+    if (batchQueue.front().content == FLUSH_COMMAND_) {
+      batchQueue.pop_front();
+      if (!buffer.empty()) {
+        writeFile(buffer.data(), buffer.size());
+        buffer.clear();
+      }
+      // 刷新文件流
+      {
+        lock_guard<mutex> lock(fileMtx_);
+        if (logFile_.is_open()) {
+          logFile_.flush();
+        }
+      }
+
+      if (flushRequestCount_.fetch_sub(1) == 1) {
+        // 刷新请求计数减到0，通知等待线程
+        lock_guard<mutex> cv_lock(flushMtx_);
+        flushCv_.notify_one();
+      }
+      continue;
+    }
+
     if (needsRotation()) {
       if (!buffer.empty()) {
         writeFile(buffer.data(), buffer.size());

@@ -18,6 +18,11 @@ enum class LogLevel {
   FATAL = 4,
 };
 
+enum class QueueFullPolicy {
+  BLOCK = 0, // 队列满时阻塞
+  DROP = 1   // 队列满时丢弃
+};
+
 inline std::string LevelToString(LogLevel level) {
   switch (level) {
   case LogLevel::DEBUG:

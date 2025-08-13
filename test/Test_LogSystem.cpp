@@ -641,6 +641,88 @@ INSTANTIATE_TEST_SUITE_P(
            std::make_tuple(3, std::vector<std::string>{"ERROR", "FATAL"}),
            std::make_tuple(4, std::vector<std::string>{"FATAL"})));
 
+// ================================
+// 队列策略测试 (Queue Policy Test)
+// ================================
+
+class QueuePolicyTest : public LogSystemTestBase {};
+
+TEST_F(QueuePolicyTest, QueueFullDropPolicy) {
+  // 1. 设置: 小队列, DROP策略
+  const size_t max_queue_size = 10;
+  config.basic.maxQueueSize = max_queue_size;
+  config.basic.queueFullPolicy = QueueFullPolicy::DROP;
+  config.basic.autoExpandMultiply = 1; // 测试时避免自动扩容
+
+  auto &logger = AsyncLogSystem::GetInstance();
+  logger.Init();
+
+  // 2. 操作: 写入远超队列容量的日志
+  const int total_messages_to_write = 1000;
+  std::thread producer([&]() {
+    for (int i = 0; i < total_messages_to_write; ++i) {
+      LOG_INFO("Drop test message {}", i);
+    }
+  });
+
+  producer.join();
+  logger.Stop();
+  LogTestUtils::WaitForLogProcessing(std::chrono::milliseconds(500));
+
+  // 3. 验证: 日志数量应该被限制
+  auto logFiles = LogTestUtils::GetLogFiles(test_dir_);
+  ASSERT_GE(logFiles.size(), 1);
+
+  size_t total_lines = 0;
+  for (const auto &file : logFiles) {
+    total_lines += LogTestUtils::CountLines(file);
+  }
+
+  // 由于异步处理和线程调度，精确数量难以预测，但应该远小于写入总数
+  // 并且约等于队列大小 + 一个批次的大小
+  EXPECT_LT(total_lines, total_messages_to_write)
+      << "With DROP policy, total logged messages should be less than total "
+         "written messages.";
+  EXPECT_LE(total_lines, max_queue_size * 2)
+      << "Logged messages should be around the queue size limit.";
+}
+
+TEST_F(QueuePolicyTest, QueueFullBlockPolicy) {
+  // 1. 设置: 小队列, BLOCK策略
+  const size_t max_queue_size = 100;
+  config.basic.maxQueueSize = max_queue_size;
+  config.basic.queueFullPolicy = QueueFullPolicy::BLOCK;
+  config.basic.autoExpandMultiply = 1; // 测试时避免自动扩容
+
+  auto &logger = AsyncLogSystem::GetInstance();
+  logger.Init();
+
+  // 2. 操作: 写入大量日志
+  const int total_messages_to_write = 1000;
+  std::thread producer([&]() {
+    for (int i = 0; i < total_messages_to_write; ++i) {
+      LOG_INFO("Block test message {}", i);
+    }
+  });
+
+  producer.join();
+  logger.Stop();
+  LogTestUtils::WaitForLogProcessing(std::chrono::milliseconds(1000));
+
+  // 3. 验证: 所有日志都应该被写入
+  auto logFiles = LogTestUtils::GetLogFiles(test_dir_);
+  ASSERT_GE(logFiles.size(), 1);
+
+  size_t total_lines = 0;
+  for (const auto &file : logFiles) {
+    total_lines += LogTestUtils::CountLines(file);
+  }
+
+  // 使用BLOCK策略，所有消息都应该被记录
+  EXPECT_GE(total_lines, total_messages_to_write)
+      << "With BLOCK policy, all messages should be logged.";
+}
+
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
 

@@ -1,7 +1,10 @@
 // log_benchmark.cpp
+#include "Config.h"
 #include "LogSystem.h"
+
 #include <benchmark/benchmark.h>
-#include <vector>
+#include <filesystem>
+#include <string>
 
 #ifdef __APPLE__
 #include <mach/mach.h>
@@ -41,158 +44,34 @@ void PrintMemoryUsage(const std::string &label) {
 #endif
 }
 
-using namespace lyf;
-
-// -------------------------------
-// 基础工具
-// -------------------------------
-static void SetUpTest(const std::string &logDir) {
-  auto &cfg = Config::GetInstance();
-  cfg.Init();
-  cfg.output.logRootDir = logDir;
-  cfg.output.toConsole = false;
-  cfg.output.toFile = true;
-  cfg.output.minLogLevel = 0;
-  cfg.cloud.enable = false; // 禁用云上传,只对日志写入文件的情况进行压力测试
-}
-
-static void TearDownTest(const std::string &logDir) {
-  std::error_code ec;
-  std::filesystem::remove_all(logDir, ec);
-}
-
-// -------------------------------
-// 单线程吞吐量
-// -------------------------------
-static void BM_SingleThreadThroughput(benchmark::State &state) {
-  const std::string logDir = "bench_single";
-  SetUpTest(logDir);
-
-  AsyncLogSystem::GetInstance().Init();
-
-  for (auto _ : state) {
-    state.PauseTiming();
-    const size_t kMessages = state.range(0);
-    state.ResumeTiming();
-
-    for (size_t i = 0; i < kMessages; ++i) {
-      LOG_INFO("msg {}", i);
-    }
-  }
-
-  AsyncLogSystem::GetInstance().Stop();
-
-  state.SetItemsProcessed(state.iterations() * state.range(0));
-  TearDownTest(logDir);
-}
-BENCHMARK(BM_SingleThreadThroughput)->RangeMultiplier(10)->Range(1000, 1000000);
-
-// -------------------------------
-// 多线程并发
-// -------------------------------
-class MultiThreadFixture : public benchmark::Fixture {
+class LogBenchmark : public benchmark::Fixture {
 public:
   void SetUp(const ::benchmark::State &state) override {
-    if (state.thread_index() == 0) {
-      logDir = "bench_multi";
-      SetUpTest(logDir);
-      AsyncLogSystem::GetInstance().Init();
-    }
+    std::filesystem::create_directory(log_dir);
   }
 
   void TearDown(const ::benchmark::State &state) override {
-    if (state.thread_index() == 0) {
-      AsyncLogSystem::GetInstance().Stop();
-      TearDownTest(logDir);
-    }
+    std::filesystem::remove_all(log_dir);
   }
 
 protected:
-  std::string logDir;
+  const std::string log_dir = "./bench_log_system";
 };
 
-BENCHMARK_DEFINE_F(MultiThreadFixture, BM_MultiThread)
-(benchmark::State &state) {
-  const size_t kMsgPerThread = 10000;
-  for (auto _ : state) {
-    for (size_t i = 0; i < kMsgPerThread; ++i) {
-      LOG_INFO("t msg {}", i);
-    }
-  }
-  state.SetItemsProcessed(state.iterations() * kMsgPerThread);
-}
-BENCHMARK_REGISTER_F(MultiThreadFixture, BM_MultiThread)
-    ->Arg(10000)
-    ->Threads(2)
-    ->Threads(4)
-    ->Threads(8)
-    ->Threads(16)
-    ->UseRealTime();
-
-// -------------------------------
-// 大消息
-// -------------------------------
-static void BM_LargeMessage(benchmark::State &state) {
-  const size_t kMsgSize = state.range(0);
-  const size_t kMessages = state.range(1);
-  const std::string logDir = "bench_large";
-  SetUpTest(logDir);
-
-  AsyncLogSystem::GetInstance().Init();
-  std::string large(kMsgSize, 'X');
-
-  for (auto _ : state) {
-    for (size_t i = 0; i < kMessages; ++i)
-      LOG_INFO("large {}", large);
-  }
-
-  AsyncLogSystem::GetInstance().Stop();
-
-  state.SetBytesProcessed(state.iterations() * kMessages * kMsgSize);
-  TearDownTest(logDir);
-}
-BENCHMARK(BM_LargeMessage)
-    ->Args({100, 10000})
-    ->Args({1000, 10000})
-    ->Args({5000, 10000});
-
-// -------------------------------
-// 文件轮转（by size）
-// -------------------------------
-static void BM_FileRotation(benchmark::State &state) {
-  const std::string logDir = "bench_rotation";
-  SetUpTest(logDir);
-
-  auto &cfg = Config::GetInstance();
-  cfg.rotation.maxFileSize = 1024 * 1024; // 1 MB
-  cfg.rotation.maxFileCount = 10;
-
-  AsyncLogSystem::GetInstance().Init();
-  std::string payload(1000, 'R');
-
-  for (auto _ : state) {
-    for (size_t i = 0; i < 2000; ++i) {
-      LOG_INFO("rot {}", payload);
-    }
-  }
-
-  AsyncLogSystem::GetInstance().Stop();
-
-  TearDownTest(logDir);
-}
-BENCHMARK(BM_FileRotation);
-
-// -------------------------------
-// 内存压力（持续写入）
-// -------------------------------
-class MemoryPressureFixture : public benchmark::Fixture {
+class MyLoggerFixture : public LogBenchmark {
 public:
   void SetUp(const ::benchmark::State &state) override {
     if (state.thread_index() == 0) {
+      LogBenchmark::SetUp(state);
       PrintMemoryUsage("Before Init");
-      logDir = "bench_memory";
-      SetUpTest(logDir);
-      AsyncLogSystem::GetInstance().Init();
+      auto &cfg = lyf::Config::GetInstance();
+      cfg.output.toConsole = false;
+      cfg.output.toFile = true;
+      cfg.output.logRootDir = log_dir;
+      cfg.cloud.enable = false;
+      cfg.basic.maxQueueSize = 81920; // 限制队列长度减少内存占用
+      cfg.basic.queueFullPolicy = lyf::QueueFullPolicy::BLOCK; // 满则阻塞
+      lyf::AsyncLogSystem::GetInstance().Init();
       PrintMemoryUsage("After Init");
     }
   }
@@ -200,18 +79,112 @@ public:
   void TearDown(const ::benchmark::State &state) override {
     if (state.thread_index() == 0) {
       PrintMemoryUsage("Before Stop");
-      AsyncLogSystem::GetInstance().Stop();
-      TearDownTest(logDir);
+      lyf::AsyncLogSystem::GetInstance().Stop();
+      LogBenchmark::TearDown(state);
       PrintMemoryUsage("After Stop");
     }
   }
-
-protected:
-  std::string logDir;
 };
 
-BENCHMARK_DEFINE_F(MemoryPressureFixture, BM_MemoryPressure)
-(benchmark::State &state) {
+// ===================================================================
+// 1. 端到端吞吐量测试
+// ===================================================================
+BENCHMARK_F(MyLoggerFixture, Throughput)(benchmark::State &state) {
+  constexpr int messages_per_iteration = 10000;
+  for (auto _ : state) {
+    for (int i = 0; i < messages_per_iteration; ++i) {
+      LOG_INFO("Thread {} message {}", state.thread_index(), i);
+    }
+    lyf::AsyncLogSystem::GetInstance().Flush();
+  }
+  state.SetItemsProcessed(state.iterations() * messages_per_iteration);
+}
+BENCHMARK_REGISTER_F(MyLoggerFixture, Throughput)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(4)
+    ->Threads(8);
+
+// ===================================================================
+// 2.1 队列入队延时测试(队列有上限, 阻塞策略)
+// ===================================================================
+BENCHMARK_F(MyLoggerFixture, Latency)(benchmark::State &state) {
+  for (auto _ : state) {
+    auto start = std::chrono::high_resolution_clock::now();
+    LOG_INFO("Latency test message {}", state.iterations());
+    auto end = std::chrono::high_resolution_clock::now();
+    state.SetIterationTime(std::chrono::duration<double>(end - start).count());
+  }
+}
+BENCHMARK_REGISTER_F(MyLoggerFixture, Latency)->UseManualTime();
+
+// ===================================================================
+// 2.2 队列入队延时测试(队列无上限)
+// ===================================================================
+BENCHMARK_F(MyLoggerFixture, Latency_EnoughMemory)(benchmark::State &state) {
+  lyf::Config::GetInstance().basic.maxQueueSize = 0; // 无上限
+  for (auto _ : state) {
+    auto start = std::chrono::high_resolution_clock::now();
+    LOG_INFO("Latency test message {}", state.iterations());
+    auto end = std::chrono::high_resolution_clock::now();
+    state.SetIterationTime(std::chrono::duration<double>(end - start).count());
+  }
+}
+BENCHMARK_REGISTER_F(MyLoggerFixture, Latency_EnoughMemory)->UseManualTime();
+
+// ===================================================================
+// 3. 消息体大小测试 (不同消息体大小)
+// ===================================================================
+BENCHMARK_DEFINE_F(MyLoggerFixture, Payload)(benchmark::State &state) {
+  const size_t messageCount = 1000;
+  const size_t messageSize = state.range(0);
+  const std::string largeMessage(messageSize, 'X');
+  for (auto _ : state) {
+    for (size_t i = 0; i < messageCount; ++i) {
+      LOG_INFO("Large payload {}: {}", i, largeMessage);
+    }
+    lyf::AsyncLogSystem::GetInstance().Flush();
+  }
+  state.SetBytesProcessed(state.iterations() * messageCount * messageSize);
+}
+BENCHMARK_REGISTER_F(MyLoggerFixture, Payload)->Range(1024, 1024 * 8);
+
+// ===================================================================
+// 4. 文件轮转效率测试
+// ===================================================================
+class RotationFixture : public LogBenchmark {
+public:
+  void SetUp(const ::benchmark::State &state) override {
+    LogBenchmark::SetUp(state);
+    auto &cfg = lyf::Config::GetInstance();
+    cfg.output.toConsole = false;
+    cfg.output.toFile = true;
+    cfg.output.logRootDir = log_dir;
+    cfg.cloud.enable = false;
+    cfg.rotation.maxFileSize = 10 * 1024 * 1024; // 10 MB
+    cfg.rotation.maxFileCount = 20;
+    lyf::AsyncLogSystem::GetInstance().Init();
+  }
+
+  void TearDown(const ::benchmark::State &state) override {
+    lyf::AsyncLogSystem::GetInstance().Stop();
+    LogBenchmark::TearDown(state);
+  }
+};
+
+BENCHMARK_F(RotationFixture, Rotation)(benchmark::State &state) {
+  std::string payload(1000, 'R');
+  for (auto _ : state) {
+    for (size_t i = 0; i < 2000; ++i) {
+      LOG_INFO("rot {}", payload);
+    }
+  }
+}
+
+// ===================================================================
+// 5. 内存压力测试 (生产者 > 消费者, 无Flush)
+// ===================================================================
+BENCHMARK_F(MyLoggerFixture, MemoryPressure)(benchmark::State &state) {
   const size_t kMsgPerThread = 50000;
   const size_t kMsgSize = 500;
   std::string payload(kMsgSize, 'M');
@@ -223,10 +196,9 @@ BENCHMARK_DEFINE_F(MemoryPressureFixture, BM_MemoryPressure)
   }
   state.SetItemsProcessed(state.iterations() * kMsgPerThread);
 }
-BENCHMARK_REGISTER_F(MemoryPressureFixture, BM_MemoryPressure)
-    ->Threads(4) // Keep the original 4 threads
+BENCHMARK_REGISTER_F(MyLoggerFixture, MemoryPressure)
+    ->Threads(4)
     ->UseRealTime();
 
-// Google Benchmark 主入口
-// -------------------------------
+// ===================================================================
 BENCHMARK_MAIN();

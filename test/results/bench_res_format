@@ -1,0 +1,32 @@
+------------------------------------------------------------------
+Benchmark                        Time             CPU   Iterations
+------------------------------------------------------------------
+BM_NoArgs_Custom             0.485 ns        0.484 ns   1499420581
+BM_NoArgs_Static             0.479 ns        0.478 ns   1466721145
+BM_NoArgs_StdFormat           14.0 ns         14.0 ns     49980722
+BM_NoArgs_StdVFormat          14.1 ns         14.1 ns     50154404
+BM_NoArgs_FmtFormat           19.7 ns         19.7 ns     38600245
+BM_OneArg_Custom              13.2 ns         13.2 ns     52594012
+BM_OneArg_Static              6.79 ns         6.79 ns    103696023
+BM_OneArg_StdFormat           20.6 ns         20.6 ns     33937913
+BM_OneArg_StdVFormat          20.7 ns         20.7 ns     33808749
+BM_OneArg_FmtFormat           21.8 ns         21.8 ns     31406894
+BM_TwoArgs_Custom             38.5 ns         38.5 ns     17854410
+BM_TwoArgs_Static             26.3 ns         26.3 ns     26096228
+BM_TwoArgs_StdFormat          60.2 ns         60.2 ns     11506723
+BM_TwoArgs_StdVFormat         60.3 ns         60.1 ns     10179301
+BM_TwoArgs_FmtFormat          59.2 ns         59.1 ns     11745755
+BM_Complex_Custom             93.2 ns         93.1 ns      7251707
+BM_Complex_Static             80.4 ns         75.3 ns     10194422
+BM_Complex_StdFormat           163 ns          157 ns      3807617
+BM_Complex_StdVFormat          145 ns          145 ns      4827952
+BM_Complex_FmtFormat          99.9 ns         99.5 ns      6892613
+BM_Numeric_Custom             77.7 ns         77.7 ns      9093507
+BM_Numeric_Static             61.9 ns         61.9 ns     11359764
+BM_Numeric_StdFormat           145 ns          145 ns      4844559
+BM_Numeric_StdVFormat          146 ns          146 ns      4872446
+BM_Numeric_FmtFormat           117 ns          115 ns      6193320
+BM_LongString_Custom          72.3 ns         72.3 ns      9500672
+BM_LongString_Static          66.3 ns         66.3 ns     10506094
+BM_LongString_StdFormat        674 ns          671 ns      1072320
+BM_LongString_FmtFormat        164 ns          163 ns      4323256

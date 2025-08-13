@@ -1,3 +1,4 @@
+#include "Config.h"
 #include <benchmark/benchmark.h>
 #include <filesystem>
 #include <string>
@@ -43,26 +44,21 @@ void PrintMemoryUsage(const std::string &label) {
 #endif
 }
 
-// ============================================================
-// Base Fixture for All Logger Benchmarks
-// ============================================================
 class LoggerBenchmark : public benchmark::Fixture {
 public:
   void SetUp(const ::benchmark::State &state) override {
-    // Create directories for logs before any test runs
-    std::filesystem::create_directory("./bench_your_log");
+    std::filesystem::create_directory(log_dir);
   }
 
   void TearDown(const ::benchmark::State &state) override {
-    // Optional: Clean up log directories after all tests are done
-    // std::filesystem::remove_all("./bench_your_log");
+    std::filesystem::remove_all(log_dir);
   }
+
+protected:
+  std::string log_dir = "./bench_mylogger";
 };
 
-// ============================================================
-// Fixture for Your Asynchronous Logger
-// ============================================================
-class YourLoggerFixture : public LoggerBenchmark {
+class MyLoggerFixture : public LoggerBenchmark {
 public:
   void SetUp(const ::benchmark::State &state) override {
     if (state.thread_index() == 0) {
@@ -70,46 +66,56 @@ public:
       if (name.find("threads:") == std::string::npos) {
         name += "/threads:" + std::to_string(state.threads());
       }
-      PrintMemoryUsage("Before " + name);
+
+      PrintMemoryUsage("Before AsyncLogSystem Init " + name);
       LoggerBenchmark::SetUp(state);
       auto &cfg = lyf::Config::GetInstance();
       cfg.output.toConsole = false;
       cfg.output.toFile = true;
-      cfg.output.logRootDir = "./bench_your_log";
+      cfg.output.logRootDir = log_dir;
       cfg.cloud.enable = false;
-      cfg.performance.fileFlushInterval = std::chrono::milliseconds(1000);
-      cfg.performance.fileBatchSize = 4096;
-      cfg.basic.maxFileLogQueueSize = 81920; // Increased queue size
-
+      cfg.basic.maxQueueSize = 1024000; // 限制队列长度减少内存占用
+      cfg.basic.queueFullPolicy = lyf::QueueFullPolicy::BLOCK;
       lyf::AsyncLogSystem::GetInstance().Init();
+      PrintMemoryUsage("After AsyncLogSystem Init " + name);
     }
   }
 
   void TearDown(const ::benchmark::State &state) override {
     if (state.thread_index() == 0) {
-      lyf::AsyncLogSystem::GetInstance().Stop();
-      LoggerBenchmark::TearDown(state);
       std::string name = state.name();
       if (name.find("threads:") == std::string::npos) {
         name += "/threads:" + std::to_string(state.threads());
       }
-      PrintMemoryUsage("After " + name);
+      PrintMemoryUsage("Before AsyncLogSystem Stop " + name);
+      lyf::AsyncLogSystem::GetInstance().Stop();
+      LoggerBenchmark::TearDown(state);
+      PrintMemoryUsage("After AsyncLogSystem Stop " + name);
     }
   }
 };
 
 // ============================================================
-// 1. Throughput Test (Single and Multi-threaded)
+// 1. True Throughput Test (Single and Multi-threaded)
+// 端到端吞吐量测试，从LOG_XXX到写入磁盘
 // ============================================================
-BENCHMARK_F(YourLoggerFixture, Throughput)(benchmark::State &state) {
+BENCHMARK_F(MyLoggerFixture, Throughput)(benchmark::State &state) {
+  // 每个iteration写10000条消息
+  constexpr int messages_per_iteration = 10000;
+
   for (auto _ : state) {
-    for (int i = 0; i < 100; ++i) {
+    // The logging work itself.
+    for (int i = 0; i < messages_per_iteration; ++i) {
       LOG_INFO("Thread {} message {}", state.thread_index(), i);
     }
+    // 每个iteration手动flush，保证写入磁盘
+    lyf::AsyncLogSystem::GetInstance().Flush();
   }
-  state.SetItemsProcessed(state.iterations() * 100);
+
+  // 记录写入的消息数量
+  state.SetItemsProcessed(state.iterations() * messages_per_iteration);
 }
-BENCHMARK_REGISTER_F(YourLoggerFixture, Throughput)
+BENCHMARK_REGISTER_F(MyLoggerFixture, Throughput)
     ->Threads(1)
     ->Threads(2)
     ->Threads(4)
@@ -117,78 +123,62 @@ BENCHMARK_REGISTER_F(YourLoggerFixture, Throughput)
 
 // ============================================================
 // 2. Latency Test (Time to push to the queue)
+// 队列推送延迟测试
 // ============================================================
-BENCHMARK_F(YourLoggerFixture, Latency)(benchmark::State &state) {
+BENCHMARK_F(MyLoggerFixture, Latency)(benchmark::State &state) {
   for (auto _ : state) {
     auto start = std::chrono::high_resolution_clock::now();
-    LOG_INFO("Latency test message");
+    LOG_INFO("Latency test message {}", state.iterations());
     auto end = std::chrono::high_resolution_clock::now();
     state.SetIterationTime(std::chrono::duration<double>(end - start).count());
   }
 }
-BENCHMARK_REGISTER_F(YourLoggerFixture, Latency)->UseManualTime();
+BENCHMARK_REGISTER_F(MyLoggerFixture, Latency)->UseManualTime();
 
 // ============================================================
 // 3. Formatting-Only Performance Test
+// 格式化性能测试
 // ============================================================
+BENCHMARK_F(MyLoggerFixture, Formatting)(benchmark::State &state) {
+  // 关闭日志输出，只测试格式化性能
+  lyf::Config &cfg = lyf::Config::GetInstance();
+  cfg.output.toConsole = false;
+  cfg.output.toFile = false;
 
-// A separate fixture for tests that don't need full logger setup
-class FormattingFixture : public benchmark::Fixture {
-public:
-  void SetUp(const ::benchmark::State &state) override {
-    if (state.thread_index() == 0) {
-      std::string name = state.name();
-      if (name.find("threads:") == std::string::npos) {
-        name += "/threads:" + std::to_string(state.threads());
-      }
-      PrintMemoryUsage("Before " + name);
-    }
-  }
+  constexpr char fmt[] = "Int: {}, Float: {}, String: {}, Bool: {}";
 
-  void TearDown(const ::benchmark::State &state) override {
-    if (state.thread_index() == 0) {
-      std::string name = state.name();
-      if (name.find("threads:") == std::string::npos) {
-        name += "/threads:" + std::to_string(state.threads());
-      }
-      PrintMemoryUsage("After " + name);
-    }
-  }
-};
-
-BENCHMARK_F(FormattingFixture, YourLogger_Formatting)(benchmark::State &state) {
   for (auto _ : state) {
     for (int i = 0; i < 100; ++i) {
       benchmark::DoNotOptimize(
-          lyf::FormatMessage("Int: {}, Float: {}, String: {}, Bool: {}", i,
-                             3.14159 * i, "test string", i % 2 == 0));
+#if _LIBCPP_STD_VER >= 20
+          // 编译期优化后的格式化
+          lyf::FormatMessage<fmt>(i, 3.14159 * i, "test string", i % 2 == 0)
+#else
+          // 仅运行时格式化
+          lyf::FormatMessage(fmt, i, 3.14159 * i, "test string", i % 2 == 0)
+#endif
+      );
     }
   }
   state.SetItemsProcessed(state.iterations() * 100);
 }
 
-// --- YourLogger Tests ---
-static void RunYourLoggerPayload(benchmark::State &state, size_t messageSize) {
+// ============================================================
+// 4. Payload Performance Test
+// 负载性能测试
+// ============================================================
+BENCHMARK_F(MyLoggerFixture, Payload)(benchmark::State &state) {
   const size_t messageCount = 1000;
-  std::string largeMessage(messageSize, 'X');
+  const size_t messageSize = 1024;
+  const std::string largeMessage(messageSize, 'X');
   for (auto _ : state) {
     for (size_t i = 0; i < messageCount; ++i) {
       LOG_INFO("Large payload {}: {}", i, largeMessage);
     }
+    lyf::AsyncLogSystem::GetInstance().Flush();
   }
   state.SetBytesProcessed(state.iterations() * messageCount * messageSize);
 }
-
-BENCHMARK_F(YourLoggerFixture, LargePayload_1KB)(benchmark::State &state) {
-  RunYourLoggerPayload(state, 1024);
-}
-
-BENCHMARK_F(YourLoggerFixture, LargePayload_8KB)(benchmark::State &state) {
-  RunYourLoggerPayload(state, 8192);
-}
-
-BENCHMARK_F(YourLoggerFixture, LargePayload_16KB)(benchmark::State &state) {
-  RunYourLoggerPayload(state, 16384);
-}
+BENCHMARK_REGISTER_F(MyLoggerFixture, Payload)->Range(1024, 1024 * 8);
 
 BENCHMARK_MAIN();

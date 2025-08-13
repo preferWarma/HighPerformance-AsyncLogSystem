@@ -1,7 +1,10 @@
 {
     "basic": {
-        "maxConsoleLogQueueSize": 4096,
-        "maxFileLogQueueSize": 8192
+        "maxQueueSize": 81920,
+        "queueFullPolicy": "BLOCK",
+        "maxBlockTime_us": 16,
+        "maxDropCount": 40960,
+        "autoExpandMultiply": 4
     },
     "output": {
         "logRootDir": "./logs",

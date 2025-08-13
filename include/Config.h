@@ -1,4 +1,5 @@
 #pragma once
+#include "Enum.h"
 #include "JsonHelper.h"
 #include "Singleton.h"
 #include <string>
@@ -14,8 +15,11 @@ struct Config : Singleton<Config> {
   friend class Singleton<Config>;
 
   struct BasicConfig {
-    size_t maxConsoleLogQueueSize; // 最大控制台日志队列大小
-    size_t maxFileLogQueueSize;    // 最大文件日志队列大小
+    size_t maxQueueSize; // 日志缓存队列初始时最大长度限制(0表示无限制)
+    QueueFullPolicy queueFullPolicy; // 队列满时的处理策略(默认:BLOCK)
+    size_t maxBlockTime_us; // 队列满时主线程阻塞最大时间，超过则会自动扩容
+    size_t maxDropCount; // 队列满时丢弃最大数量，超过则会自动扩容
+    size_t autoExpandMultiply; // 最大自动扩容倍数（以初始的最大队列长度为基准）
   } basic;
 
   struct OutPutConfig {
@@ -57,49 +61,57 @@ struct Config : Singleton<Config> {
   void Init() {
     auto &helper = JsonHelper::GetInstance();
     { // basic config
-      basic.maxConsoleLogQueueSize =
-          helper.Get<int>("basic.maxConsoleLogQueueSize");
-      basic.maxFileLogQueueSize = helper.Get<int>("basic.maxFileLogQueueSize");
+      basic.maxQueueSize = helper.Get<int>("basic.maxQueueSize", 0);
+      basic.queueFullPolicy =
+          helper.Get<string>("basic.queueFullPolicy", "BLOCK") == "BLOCK"
+              ? QueueFullPolicy::BLOCK
+              : QueueFullPolicy::DROP;
+      basic.maxBlockTime_us = helper.Get<int>("basic.maxBlockTime_us", 16);
+      basic.maxDropCount = helper.Get<int>("basic.maxDropCount", 40960);
+      basic.autoExpandMultiply = helper.Get<int>("basic.autoExpandMultiply", 4);
     }
 
     { // output config
-      output.logRootDir = helper.Get<string>("output.logRootDir");
-      output.toFile = helper.Get<bool>("output.toFile");
-      output.toConsole = helper.Get<bool>("output.toConsole");
-      output.minLogLevel = helper.Get<int>("output.minLogLevel");
+      output.logRootDir = helper.Get<string>("output.logRootDir", "./log");
+      output.toFile = helper.Get<bool>("output.toFile", true);
+      output.toConsole = helper.Get<bool>("output.toConsole", false);
+      output.minLogLevel = helper.Get<int>("output.minLogLevel", 0);
     }
 
     { // performance config
       performance.consoleBatchSize =
-          helper.Get<int>("performance.consoleBatchSize");
-      performance.fileBatchSize = helper.Get<int>("performance.fileBatchSize");
-      performance.consoleFlushInterval =
-          milliseconds(helper.Get<int>("performance.consoleFlushInterval_ms"));
-      performance.fileFlushInterval =
-          milliseconds(helper.Get<int>("performance.fileFlushInterval_ms"));
+          helper.Get<int>("performance.consoleBatchSize", 512);
+      performance.fileBatchSize =
+          helper.Get<int>("performance.fileBatchSize", 1024);
+      performance.consoleFlushInterval = milliseconds(
+          helper.Get<int>("performance.consoleFlushInterval_ms", 50));
+      performance.fileFlushInterval = milliseconds(
+          helper.Get<int>("performance.fileFlushInterval_ms", 100));
       performance.enableAsyncConsole =
-          helper.Get<bool>("performance.enableAsyncConsole");
+          helper.Get<bool>("performance.enableAsyncConsole", true);
       performance.consoleBufferSize_kb =
-          helper.Get<int>("performance.consoleBufferSize_kb");
+          helper.Get<int>("performance.consoleBufferSize_kb", 16);
       performance.fileBufferSize_kb =
-          helper.Get<int>("performance.fileBufferSize_kb");
+          helper.Get<int>("performance.fileBufferSize_kb", 32);
     }
 
     { // rotation config
-      rotation.maxFileSize = helper.Get<int>("rotation.maxLogFileSize");
-      rotation.maxFileCount = helper.Get<int>("rotation.maxLogFileCount");
+      rotation.maxFileSize = helper.Get<int>("rotation.maxLogFileSize",
+                                             1024 * 1024 * 10); // 默认10MB
+      rotation.maxFileCount = helper.Get<int>("rotation.maxLogFileCount", 10);
     }
 
     { // cloud config
-      cloud.enable = helper.Get<bool>("cloud.enable");
-      cloud.serverUrl = helper.Get<string>("cloud.serverUrl");
-      cloud.uploadEndpoint = helper.Get<string>("cloud.uploadEndpoint");
-      cloud.uploadTimeout_s = helper.Get<int>("cloud.uploadTimeout_s");
-      cloud.deleteAfterUpload = helper.Get<bool>("cloud.deleteAfterUpload");
-      cloud.apiKey = helper.Get<string>("cloud.apiKey");
-      cloud.maxRetries = helper.Get<int>("cloud.maxRetries");
-      cloud.retryDelay_s = helper.Get<int>("cloud.retryDelay_s");
-      cloud.maxQueueSize = helper.Get<int>("cloud.maxQueueSize");
+      cloud.enable = helper.Get<bool>("cloud.enable", false);
+      cloud.serverUrl = helper.Get<string>("cloud.serverUrl", "");
+      cloud.uploadEndpoint = helper.Get<string>("cloud.uploadEndpoint", "");
+      cloud.uploadTimeout_s = helper.Get<int>("cloud.uploadTimeout_s", 30);
+      cloud.deleteAfterUpload =
+          helper.Get<bool>("cloud.deleteAfterUpload", false);
+      cloud.apiKey = helper.Get<string>("cloud.apiKey", "");
+      cloud.maxRetries = helper.Get<int>("cloud.maxRetries", 3);
+      cloud.retryDelay_s = helper.Get<int>("cloud.retryDelay_s", 5);
+      cloud.maxQueueSize = helper.Get<int>("cloud.maxQueueSize", 100);
     }
   }
 };
