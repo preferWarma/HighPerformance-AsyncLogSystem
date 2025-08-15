@@ -1,7 +1,10 @@
 #pragma once
 #include "Enum.h"
+#include "Helper.h"
 #include "JsonHelper.h"
 #include "Singleton.h"
+#include "Timer.h"
+#include <filesystem>
 #include <string>
 
 // 是否编译云存储模块
@@ -14,6 +17,12 @@ using std::chrono::milliseconds;
 struct Config : Singleton<Config> {
   friend class Singleton<Config>;
 
+private:
+  // 用于定时检测配置文件执行热更新
+  Timer timer_;                                   // 异步定时器
+  std::filesystem::file_time_type lastWriteTime_; // 上次配置文件修改时间
+
+public:
   struct BasicConfig {
     size_t maxQueueSize; // 日志缓存队列初始时最大长度限制(0表示无限制)
     QueueFullPolicy queueFullPolicy; // 队列满时的处理策略(默认:BLOCK)
@@ -55,8 +64,6 @@ struct Config : Singleton<Config> {
     int retryDelay_s;       // 重试延迟时间（秒）
     int maxQueueSize;       // 上传队列最大大小
   } cloud;
-
-  Config() { Init(); }
 
   void Init() {
     auto &helper = JsonHelper::GetInstance();
@@ -113,6 +120,33 @@ struct Config : Singleton<Config> {
       cloud.retryDelay_s = helper.Get<int>("cloud.retryDelay_s", 5);
       cloud.maxQueueSize = helper.Get<int>("cloud.maxQueueSize", 100);
     }
+  }
+
+protected:
+  Config() {
+    Init();
+    StartListen();
+  }
+
+private:
+  void StartListen() {
+    auto &helper = JsonHelper::GetInstance();
+    auto &configPath = helper.getFilePath();
+    if (configPath.empty()) {
+      return;
+    }
+    lastWriteTime_ = getFileLastWriteTime(configPath);
+
+    timer_.setInterval(1000, [&]() {
+      auto newLastWriteTime = getFileLastWriteTime(configPath);
+      if (newLastWriteTime > lastWriteTime_) {
+        lyf_Internal_LOG("Config file '{}' has been modified, reloading.",
+                         configPath);
+        helper.LoadFromFile(); // 重新加载配置文件
+        Init();                // 重新初始化配置
+        lastWriteTime_ = newLastWriteTime;
+      }
+    });
   }
 };
 } // namespace lyf

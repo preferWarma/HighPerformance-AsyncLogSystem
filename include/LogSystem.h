@@ -414,7 +414,7 @@ inline bool AsyncLogSystem::initializeLogFile() {
     if (rotationType_ == RotationType::BY_TIME ||
         rotationType_ == RotationType::BY_SIZE_AND_TIME) {
       currentLogFilePath_ = generateDailyLogFileName();
-      lastRotationDate_ = getCurrentTime("%Y%m%d");
+      lastRotationDate_ = GetCurrentTime("%Y%m%d");
     } else {
       currentLogFilePath_ = generateLogFileName();
     }
@@ -452,7 +452,7 @@ inline bool AsyncLogSystem::needsRotation() {
     // 检查日期变化
     if (rotationType_ == RotationType::BY_TIME ||
         rotationType_ == RotationType::BY_SIZE_AND_TIME) {
-      std::string currentDate = getCurrentTime("%Y%m%d");
+      std::string currentDate = GetCurrentTime("%Y%m%d");
       if (currentDate != lastRotationDate_) {
         needRotation = true;
       }
@@ -487,7 +487,7 @@ inline bool AsyncLogSystem::rotateLogFile() {
     std::string newLogFile;
     if (rotationType_ == RotationType::BY_TIME ||
         rotationType_ == RotationType::BY_SIZE_AND_TIME) {
-      std::string currentDate = getCurrentTime("%Y%m%d");
+      std::string currentDate = GetCurrentTime("%Y%m%d");
       if (currentDate != lastRotationDate_) {
         // 按日期轮转
         newLogFile = generateDailyLogFileName(currentDate);
@@ -564,10 +564,11 @@ inline void AsyncLogSystem::cleanupOldLogFiles() {
     for (size_t i = config_.rotation.maxFileCount; i < logFiles.size(); ++i) {
       try {
         std::filesystem::remove(logFiles[i]);
-        lyf_Internal_LOG("[LogSystem] Removed old log file: {}", logFiles[i]);
+        lyf_Internal_LOG("[LogSystem] Removed old log file: {}",
+                         logFiles[i].c_str());
       } catch (const std::exception &e) {
         lyf_Internal_LOG("[LogSystem] Failed to remove old log file {}: {}",
-                         logFiles[i], e.what());
+                         logFiles[i].c_str(), e.what());
       }
     }
   } catch (const std::exception &e) {
@@ -665,7 +666,7 @@ inline void AsyncLogSystem::ProcessConsoleBatch(LogQueue::QueueType &batchQueue,
 
     buffer += LevelColor(msg.level);
     buffer +=
-        "[" + formatTime(msg.time) + "] [" + LevelToString(msg.level) + "] ";
+        "[" + FormatTime(msg.time) + "] [" + LevelToString(msg.level) + "] ";
     buffer += msg.content;
     buffer += "\033[0m\n";
 
@@ -739,7 +740,7 @@ inline void AsyncLogSystem::ProcessFileBatch(LogQueue::QueueType &batchQueue,
     auto msg = std::move(batchQueue.front());
     batchQueue.pop_front();
 
-    std::string msgStr = "[" + formatTime(msg.time) + "] [" +
+    std::string msgStr = "[" + FormatTime(msg.time) + "] [" +
                          LevelToString(msg.level) + "] " + msg.content + "\n";
 
     // 避免缓冲区无限增长

@@ -6,13 +6,18 @@
 #include <thread>
 
 // 是否输出内部日志
-// #define LYF_lyf_Internal_LOG
+#define LYF_lyf_Internal_LOG
 
 #ifdef LYF_lyf_Internal_LOG
 #include "FastFormater.h"
-#define lyf_Internal_LOG(fmt, ...) std::cout << FormatMessage(fmt, ##__VA_ARGS__) << std::endl;
+#include <iostream>
+#if _LIBCPP_STD_VER >= 20
+#define lyf_Internal_LOG(fmt, ...)                                             \
+  std::cout << FormatMessage<fmt>(__VA_ARGS__) << std::endl;
 #else
-#define lyf_Internal_LOG(fmt, ...) ((void)0)
+#define lyf_Internal_LOG(fmt, ...)                                             \
+  std::cout << FormatMessage(fmt, ##__VA_ARGS__) << std::endl;
+#endif
 #endif
 
 namespace lyf {
@@ -24,7 +29,7 @@ using system_clock = chrono::system_clock;
 /// @brief 获取当前时间戳
 /// @return 当前时间戳
 /// @note 单位为毫秒
-inline int64_t getCurrentTimeStamp() {
+inline int64_t GetCurrentTimeStamp() {
   return duration_cast<chrono::milliseconds>(
              system_clock::now().time_since_epoch())
       .count();
@@ -33,7 +38,7 @@ inline int64_t getCurrentTimeStamp() {
 /// @brief 获取当前时间的格式化字符串
 /// @param format 时间格式字符串, 默认为"%Y-%m-%d %H:%M:%S"
 /// @return 格式化后的时间字符串
-inline string getCurrentTime(const string &format = "%Y-%m-%d %H:%M:%S") {
+inline string GetCurrentTime(const string &format = "%Y-%m-%d %H:%M:%S") {
   auto now = system_clock::now();
   auto time_t = system_clock::to_time_t(now);
   std::stringstream ss;
@@ -46,19 +51,12 @@ inline string getCurrentTime(const string &format = "%Y-%m-%d %H:%M:%S") {
 /// @param timePoint 时间点
 /// @param format 时间格式字符串, 默认为"%Y-%m-%d %H:%M:%S"
 /// @return 格式化后的时间字符串
-inline string formatTime(const system_clock::time_point &timePoint,
+inline string FormatTime(const system_clock::time_point &timePoint,
                          const string &format = "%Y-%m-%d %H:%M:%S") {
   std::time_t time = system_clock::to_time_t(timePoint);
   char buf[1024];
   strftime(buf, sizeof(buf), format.c_str(), localtime(&time));
   return buf;
-}
-
-/// @brief 辅助函数, 将单个参数转化为字符串
-template <typename T> string to_string(T &&arg) {
-  std::stringstream oss;
-  oss << std::forward<T>(arg);
-  return oss.str();
 }
 
 /// @brief RAII 确保标志被重置
@@ -84,6 +82,19 @@ inline bool CreateLogDirectory(const string &path) {
   } catch (const std::exception &e) {
     lyf_Internal_LOG("Failed to create log directory: {}\n", e.what());
     return false;
+  }
+}
+
+/// @brief 获取文件上一次修改时间
+/// @param filePath 文件路径
+/// @return 文件上一次修改时间
+inline std::filesystem::file_time_type
+getFileLastWriteTime(const string &filePath) {
+  try {
+    return std::filesystem::last_write_time(filePath);
+  } catch (const std::exception &e) {
+    lyf_Internal_LOG("Failed to get last write time: {}\n", e.what());
+    return std::filesystem::file_time_type::min();
   }
 }
 
