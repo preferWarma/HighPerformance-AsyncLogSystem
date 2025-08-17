@@ -6,7 +6,7 @@
 #include <thread>
 
 // 是否输出内部日志
-#define LYF_lyf_Internal_LOG
+// #define LYF_lyf_Internal_LOG
 
 #ifdef LYF_lyf_Internal_LOG
 #include "FastFormater.h"
@@ -18,6 +18,8 @@
 #define lyf_Internal_LOG(fmt, ...)                                             \
   std::cout << FormatMessage(fmt, ##__VA_ARGS__) << std::endl;
 #endif
+#else
+#define lyf_Internal_LOG(fmt, ...) ((void)0)
 #endif
 
 namespace lyf {
@@ -96,6 +98,30 @@ getFileLastWriteTime(const string &filePath) {
     lyf_Internal_LOG("Failed to get last write time: {}\n", e.what());
     return std::filesystem::file_time_type::min();
   }
+}
+
+inline bool StartWith(std::string_view str, std::string_view prefix) {
+  if (str.size() < prefix.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < prefix.size(); ++i) {
+    if (str[i] != prefix[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+inline bool EndWith(std::string_view str, std::string_view suffix) {
+  if (str.size() < suffix.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < suffix.size(); ++i) {
+    if (str[str.size() - suffix.size() + i] != suffix[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 } // namespace lyf

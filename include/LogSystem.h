@@ -362,7 +362,7 @@ inline std::vector<std::string> AsyncLogSystem::getLogFiles() const {
          std::filesystem::directory_iterator(config_.output.logRootDir)) {
       if (entry.is_regular_file()) {
         std::string filename = entry.path().filename().string();
-        if (filename.starts_with("log_") && filename.ends_with(".txt")) {
+        if (StartWith(filename, "log_") && EndWith(filename, ".log")) {
           files.push_back(entry.path().string());
         }
       }
@@ -382,7 +382,7 @@ inline std::string AsyncLogSystem::generateLogFileName() const {
   auto time_t = std::chrono::system_clock::to_time_t(now);
   std::stringstream ss;
   ss << "log_" << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S_")
-     << rotateCounts_ << ".txt";
+     << rotateCounts_ << ".log";
   return (std::filesystem::path(config_.output.logRootDir) / ss.str()).string();
 }
 
@@ -398,7 +398,7 @@ AsyncLogSystem::generateDailyLogFileName(const std::string &date) const {
     dateStr = ss.str();
   }
   return (std::filesystem::path(config_.output.logRootDir) /
-          ("log_" + dateStr + ".txt"))
+          ("log_" + dateStr + ".log"))
       .string();
 }
 
@@ -549,7 +549,7 @@ inline void AsyncLogSystem::cleanupOldLogFiles() {
          std::filesystem::directory_iterator(config_.output.logRootDir)) {
       if (entry.is_regular_file()) {
         std::string filename = entry.path().filename().string();
-        if (filename.starts_with("log_") && filename.ends_with(".txt")) {
+        if (filename.starts_with("log_") && filename.ends_with(".log")) {
           logFiles.push_back(entry.path());
         }
       }

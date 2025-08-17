@@ -73,7 +73,7 @@ public:
       spdlog::shutdown(); // Clean up previous state
       spdlog::init_thread_pool(81920, 1);
       auto logger = spdlog::basic_logger_mt<spdlog::async_factory>(
-          "async_logger", log_dir + "/log.txt", true /* truncate */);
+          "async_logger", log_dir + "/log.log", true /* truncate */);
       spdlog::set_default_logger(std::move(logger));
       PrintMemoryUsage("After spdlog init " + name);
     }

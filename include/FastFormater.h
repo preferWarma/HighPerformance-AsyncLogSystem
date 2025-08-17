@@ -6,6 +6,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -132,7 +133,6 @@ template <typename T> struct FastAppender {
 // ============================================================
 // 运行时格式化实现
 // ============================================================
-
 namespace detail {
 
 inline size_t find_placeholder(std::string_view str, size_t start = 0) {
@@ -148,7 +148,6 @@ template <typename... Args, size_t... Is>
 inline void format_impl(std::string &result, std::string_view fmt,
                         std::index_sequence<Is...>, Args &&...args) {
   size_t pos = 0;
-
   auto process_arg = [&](auto &&arg) {
     size_t placeholder = find_placeholder(fmt, pos);
     if (placeholder != std::string_view::npos) {
@@ -167,11 +166,9 @@ inline void format_impl(std::string &result, std::string_view fmt,
     result.append(fmt.data() + pos, fmt.size() - pos);
   }
 }
-
 } // namespace detail
 
 #if _LIBCPP_STD_VER >= 20
-
 // ============================================================
 // 编译期格式化实现
 // ============================================================
@@ -203,85 +200,118 @@ template <size_t N> FixedString(const char (&)[N]) -> FixedString<N - 1>;
 
 // 编译期格式解析器
 template <size_t N> struct FormatInfo {
-  static constexpr size_t MAX_ARGS = 32;
+  static constexpr size_t MAX_SEGMENTS = 64;
+  // 段类型：字面量或占位符
+  enum SegmentType : uint8_t { Literal, Placeholder };
+
+  struct Segment {
+    SegmentType type;
+    size_t start;  // 对于字面量：起始位置
+    size_t length; // 对于字面量：长度
+  };
 
   FixedString<N> format;
-  std::array<size_t, MAX_ARGS> literal_starts = {}; // 每个字面量段的起始位置
-  std::array<size_t, MAX_ARGS> literal_lengths = {}; // 每个字面量段的长度
-  size_t arg_count = 0;                              // 占位符数量
-  size_t literal_count = 0;                          // 字面量段数量
+  std::array<Segment, MAX_SEGMENTS> segments = {};
+  size_t segment_count = 0;
+  size_t placeholder_count = 0;
 
   constexpr FormatInfo(const char (&fmt)[N + 1]) : format(fmt) { parse(); }
 
 private:
   constexpr void parse() {
-    size_t literal_start = 0;
-
-    for (size_t i = 0; i < N; ++i) {
-      if (i < N - 1 && format.data[i] == '{' && format.data[i + 1] == '}') {
-        if (i > literal_start) {
-          literal_starts[literal_count] = literal_start;
-          literal_lengths[literal_count] = i - literal_start;
-          literal_count++;
+    size_t pos = 0;
+    while (pos < N) {
+      // 查找下一个占位符
+      size_t placeholder_pos = find_next_placeholder(pos);
+      if (placeholder_pos == N) {
+        // 没有更多占位符，记录剩余的字面量
+        if (pos < N) {
+          segments[segment_count++] = {Literal, pos, N - pos};
         }
-        arg_count++;
-        i++;
-        literal_start = i + 1;
+        break;
+      }
+      // 记录占位符前的字面量(如果有)
+      if (placeholder_pos > pos) {
+        segments[segment_count++] = {Literal, pos, placeholder_pos - pos};
+      }
+      // 记录占位符(占位符不需要位置和长度信息)
+      segments[segment_count++] = {Placeholder, 0, 0};
+      placeholder_count++;
+      pos = placeholder_pos + 2; // 跳过 '{}'
+    }
+  }
+
+  constexpr size_t find_next_placeholder(size_t start) const {
+    for (size_t i = start; i < N - 1; ++i) {
+      if (format.data[i] == '{' && format.data[i + 1] == '}') {
+        return i;
       }
     }
-
-    if (literal_start < N) {
-      literal_starts[literal_count] = literal_start;
-      literal_lengths[literal_count] = N - literal_start;
-      literal_count++;
-    }
+    return N;
   }
 };
 
 // 编译期格式化核心实现
 namespace detail {
 
-template <FormatInfo Info, typename... Args>
+template <auto Info, typename... Args>
 std::string format_compile_impl(Args &&...args) {
-  static_assert(Info.arg_count == sizeof...(args),
+  static_assert(Info.placeholder_count == sizeof...(args),
                 "Number of arguments doesn't match format string placeholders");
 
   std::string result;
+  // 预估大小：格式字符串长度 + 每个参数平均10字符
   size_t estimated_size = Info.format.size() + sizeof...(args) * 10;
   result.reserve(estimated_size);
 
-  size_t literal_index = 0;
-
-  auto write_next_arg = [&](auto &&arg) {
-    // 1: 写入当前参数前的字面量
-    if (literal_index < Info.literal_count) {
-      size_t start = Info.literal_starts[literal_index];
-      size_t len = Info.literal_lengths[literal_index];
-      if (len > 0) {
-        result.append(Info.format.data + start, len);
+  if constexpr (sizeof...(args) == 0) {
+    // 无参数时，只输出字面量
+    for (size_t i = 0; i < Info.segment_count; ++i) {
+      const auto &segment = Info.segments[i];
+      if (segment.type == decltype(Info)::Literal) {
+        result.append(Info.format.data + segment.start, segment.length);
       }
-      literal_index++;
     }
-    // 2: 写入当前参数
-    detail::FastAppender<decltype(arg)>::append(
-        result, std::forward<decltype(arg)>(arg));
+    return result;
+  }
+
+  auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
+  size_t arg_index = 0;
+
+  // 处理参数输出
+  auto append_arg_at_index = [&result, &args_tuple](size_t target_index) {
+    size_t current_index = 0;
+    // 遍历参数元组，找到目标索引的参数
+    std::apply(
+        [&](auto &&...elements) {
+          ((current_index++ == target_index
+                ? (detail::FastAppender<decltype(elements)>::append(
+                       result, std::forward<decltype(elements)>(elements)),
+                   0)
+                : 0),
+           ...);
+        },
+        args_tuple);
   };
 
-  (write_next_arg(std::forward<Args>(args)), ...);
+  // 线性遍历段
+  for (size_t i = 0; i < Info.segment_count; ++i) {
+    const auto &segment = Info.segments[i];
 
-  // 3: 写入最后一个字面量
-  while (literal_index < Info.literal_count) {
-    size_t start = Info.literal_starts[literal_index];
-    size_t len = Info.literal_lengths[literal_index];
-    if (len > 0) {
-      result.append(Info.format.data + start, len);
+    if (segment.type == decltype(Info)::Literal) {
+      // 直接使用预计算的位置和长度
+      result.append(Info.format.data + segment.start, segment.length);
+    } else {
+      // 输出对应索引的参数
+      if (arg_index < sizeof...(args)) {
+        append_arg_at_index(arg_index);
+        arg_index++;
+      }
     }
-    literal_index++;
   }
 
   return result;
 }
-
 } // namespace detail
 
 // ============================================================
@@ -311,26 +341,23 @@ template <FixedString fmt> constexpr auto operator""_fmt() {
 // 统一接口
 // ============================================================
 
-// 运行时格式化（主接口）
+// 运行时格式化
 template <typename... Args>
 [[nodiscard]] inline std::string FormatMessage(std::string_view fmt,
                                                Args &&...args) {
   if constexpr (sizeof...(args) == 0) {
     return std::string(fmt);
   }
-
   size_t estimated_size = fmt.size() + sizeof...(args) * 8;
   std::string result;
   result.reserve(estimated_size);
-
   detail::format_impl(result, fmt, std::index_sequence_for<Args...>{},
                       std::forward<Args>(args)...);
-
   return result;
 }
 
 #if _LIBCPP_STD_VER >= 20
-// 编译期格式化（统一接口）
+// 编译期格式化
 template <FixedString fmt, typename... Args>
 [[nodiscard]] inline std::string FormatMessage(Args &&...args) {
   if constexpr (sizeof...(args) == 0) {

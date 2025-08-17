@@ -86,7 +86,7 @@ public:
     for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
       if (entry.is_regular_file()) {
         std::string filename = entry.path().filename().string();
-        if (filename.starts_with("log_") && filename.ends_with(".txt")) {
+        if (StartWith(filename, "log_") && EndWith(filename, ".log")) {
           files.push_back(entry.path().string());
         }
       }
