@@ -35,7 +35,7 @@ inline size_t int_to_chars(char *buffer, size_t size, T value) {
 }
 
 inline size_t float_to_chars(char *buffer, size_t size, double value) {
-#if _LIBCPP_STD_VER >= 17
+#if __cplusplus >= 201703L
   auto [ptr, ec] = std::to_chars(buffer, buffer + size, value);
   return (ec == std::errc{}) ? (ptr - buffer) : 0;
 #else
@@ -168,7 +168,7 @@ inline void format_impl(std::string &result, std::string_view fmt,
 }
 } // namespace detail
 
-#if _LIBCPP_STD_VER >= 20
+#if __cplusplus >= 202002L
 // ============================================================
 // 编译期格式化实现
 // ============================================================
@@ -356,7 +356,7 @@ template <typename... Args>
   return result;
 }
 
-#if _LIBCPP_STD_VER >= 20
+#if __cplusplus >= 202002L
 // 编译期格式化
 template <FixedString fmt, typename... Args>
 [[nodiscard]] inline std::string FormatMessage(Args &&...args) {

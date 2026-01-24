@@ -1,41 +1,46 @@
 #pragma once
 
+#include "Config.h"
 #include "LogQue.h"
 #include "tool/FastFormater.h"
-
-#if defined(CLOUD_INCLUDE)
-#include "CloudUploader.h"
-#endif
+#include "tool/Singleton.h"
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <ostream>
+#include <source_location>
+#include <string_view>
 #include <utility>
 
+// 初始化日志系统
+#define INIT_LOG_SYSTEM(cfg_path_)                                             \
+  lyf::AsyncLogSystem::Instance().Init(lyf::Config(cfg_path_))
+
 // 日志调用宏
-#if _LIBCPP_STD_VER >= 20
-#define LOG_DEBUG(fmt, ...)                                                    \
-  lyf::AsyncLogSystem::GetInstance().Faster_Debug<fmt>(__VA_ARGS__)
-#define LOG_INFO(fmt, ...)                                                     \
-  lyf::AsyncLogSystem::GetInstance().Faster_Info<fmt>(__VA_ARGS__)
-#define LOG_WARN(fmt, ...)                                                     \
-  lyf::AsyncLogSystem::GetInstance().Faster_Warn<fmt>(__VA_ARGS__)
-#define LOG_ERROR(fmt, ...)                                                    \
-  lyf::AsyncLogSystem::GetInstance().Faster_Error<fmt>(__VA_ARGS__)
-#define LOG_FATAL(fmt, ...)                                                    \
-  lyf::AsyncLogSystem::GetInstance().Faster_Fatal<fmt>(__VA_ARGS__)
+#if __cplusplus >= 202002L
+#define LOG_IMPL(level, fmt, ...)                                              \
+  lyf::AsyncLogSystem::Instance().Log<fmt>(                                    \
+      level, __FILE__, __LINE__,                                               \
+      std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__)
+#define LOG_DEBUG(fmt, ...) LOG_IMPL(LogLevel::DEBUG, fmt, ##__VA_ARGS__)
+#define LOG_INFO(fmt, ...) LOG_IMPL(LogLevel::INFO, fmt, ##__VA_ARGS__)
+#define LOG_WARN(fmt, ...) LOG_IMPL(LogLevel::WARN, fmt, ##__VA_ARGS__)
+#define LOG_ERROR(fmt, ...) LOG_IMPL(LogLevel::ERROR, fmt, ##__VA_ARGS__)
+#define LOG_FATAL(fmt, ...) LOG_IMPL(LogLevel::FATAL, fmt, ##__VA_ARGS__)
+
 #else
-#define LOG_DEBUG(...) lyf::AsyncLogSystem::GetInstance().Debug(__VA_ARGS__)
-#define LOG_INFO(...) lyf::AsyncLogSystem::GetInstance().Info(__VA_ARGS__)
-#define LOG_WARN(...) lyf::AsyncLogSystem::GetInstance().Warn(__VA_ARGS__)
-#define LOG_ERROR(...) lyf::AsyncLogSystem::GetInstance().Error(__VA_ARGS__)
-#define LOG_FATAL(...) lyf::AsyncLogSystem::GetInstance().Fatal(__VA_ARGS__)
+#define LOG_DEBUG(...) lyf::AsyncLogSystem::Instance().Debug(__VA_ARGS__)
+#define LOG_INFO(...) lyf::AsyncLogSystem::Instance().Info(__VA_ARGS__)
+#define LOG_WARN(...) lyf::AsyncLogSystem::Instance().Warn(__VA_ARGS__)
+#define LOG_ERROR(...) lyf::AsyncLogSystem::Instance().Error(__VA_ARGS__)
+#define LOG_FATAL(...) lyf::AsyncLogSystem::Instance().Fatal(__VA_ARGS__)
 #endif
 
 namespace lyf {
@@ -44,80 +49,33 @@ using std::unique_ptr, std::make_unique, std::mutex, std::lock_guard;
 
 class AsyncLogSystem : public Singleton<AsyncLogSystem> {
   friend class Singleton<AsyncLogSystem>;
-
-private:
-  AsyncLogSystem() : config_(Config::GetInstance()) { Init(); }
+  enum class RotationType {
+    BY_SIZE,         // 按文件大小轮转
+    BY_TIME,         // 按时间轮转(每天)
+    BY_SIZE_AND_TIME // 按大小和时间轮转
+  };
 
 public:
-  inline void Init();
+  inline void Init(const Config &config);
+  inline bool HasInit() const { return !isStop_.load(); }
   inline void Stop();
   inline void Flush();
   ~AsyncLogSystem() noexcept { Stop(); }
 
 public:
-  template <typename... Args>
-  inline void Log(LogLevel level, const string &fmt, Args &&...args);
-
-  template <typename... Args>
-  inline void Debug(const string &fmt, Args &&...args) {
-    Log(LogLevel::DEBUG, fmt, std::forward<Args>(args)...);
-  }
-
-  template <typename... Args>
-  inline void Info(const string &fmt, Args &&...args) {
-    Log(LogLevel::INFO, fmt, std::forward<Args>(args)...);
-  }
-
-  template <typename... Args>
-  inline void Warn(const string &fmt, Args &&...args) {
-    Log(LogLevel::WARN, fmt, std::forward<Args>(args)...);
-  }
-
-  template <typename... Args>
-  inline void Error(const string &fmt, Args &&...args) {
-    Log(LogLevel::ERROR, fmt, std::forward<Args>(args)...);
-  }
-
-  template <typename... Args>
-  inline void Fatal(const string &fmt, Args &&...args) {
-    Log(LogLevel::FATAL, fmt, std::forward<Args>(args)...);
-  }
-
-#if _LIBCPP_STD_VER >= 20
+#if __cplusplus >= 202002L
 public: // 编译期优化(C++20级以上支持)
   template <FixedString fmt, typename... Args>
-  inline void Faster_Log(LogLevel level, Args &&...args);
-
-  template <FixedString fmt, typename... Args>
-  inline void Faster_Debug(Args &&...args) {
-    Faster_Log<fmt>(LogLevel::DEBUG, std::forward<Args>(args)...);
-  }
-
-  template <FixedString fmt, typename... Args>
-  inline void Faster_Info(Args &&...args) {
-    Faster_Log<fmt>(LogLevel::INFO, std::forward<Args>(args)...);
-  }
-
-  template <FixedString fmt, typename... Args>
-  inline void Faster_Warn(Args &&...args) {
-    Faster_Log<fmt>(LogLevel::WARN, std::forward<Args>(args)...);
-  }
-
-  template <FixedString fmt, typename... Args>
-  inline void Faster_Error(Args &&...args) {
-    Faster_Log<fmt>(LogLevel::ERROR, std::forward<Args>(args)...);
-  }
-
-  template <FixedString fmt, typename... Args>
-  inline void Faster_Fatal(Args &&...args) {
-    Faster_Log<fmt>(LogLevel::FATAL, std::forward<Args>(args)...);
-  }
-
+  inline void Log(LogLevel level, const char *file_name, size_t file_line,
+                  size_t thread_id, Args &&...args);
+#else
+  template <typename... Args>
+  inline void Log(LogLevel level, std::string_view file_name, size_t file_line,
+                  size_t thread_id, std::string_view fmt, Args &&...args);
 #endif
 
 public:
   inline string getCurrentLogFilePath() const { return currentLogFilePath_; }
-
   inline void setRotationType(RotationType type) { rotationType_ = type; }
 
   inline void setMaxFileSize(size_t maxSize) {
@@ -147,42 +105,44 @@ private:
   inline bool rotateLogFile();      // 执行日志轮转
   inline void cleanupOldLogFiles(); // 清理旧的日志文件
 
-public:
-#if defined(CLOUD_INCLUDE)
-  // 获取上传队列状态
-  inline size_t getUploadQueueSize() const {
-    return cloudUploader_ ? cloudUploader_->getQueueSize() : 0;
-  }
-
-  inline const auto &getCloudUploader() const { return cloudUploader_; }
-
-  // 检查云端上传是否启用
-  inline bool isCloudUploadEnabled() const {
-    return config_.cloud.enable && cloudUploader_ != nullptr;
-  }
-#endif
-
 private:
   // 控制台输出线程
   inline void ConsoleWorkerLoop();
   inline void FileWorkerLoop();
-  inline void ProcessConsoleBatch(LogQueue::QueueType &batchQueue,
+  inline void ProcessConsoleBatch(LogQueue::OutputQueType &batchQueue,
                                   std::string &buffer);
-  inline void ProcessFileBatch(LogQueue::QueueType &batchQueue,
+  inline void ProcessFileBatch(LogQueue::OutputQueType &batchQueue,
                                std::string &buffer);
 
+  inline std::string LevelColor(LogLevel level) {
+    switch (level) {
+    case LogLevel::DEBUG:
+      return "\033[0;37m"; // 白色
+    case LogLevel::INFO:
+      return "\033[0;32m"; // 绿色
+    case LogLevel::WARN:
+      return "\033[1;33m"; // 黄色
+    case LogLevel::ERROR:
+      return "\033[1;31m"; // 红色
+    case LogLevel::FATAL:
+      return "\033[1;35m"; // 紫色
+    default:
+      return "\033[0m"; // 默认
+    }
+  }
+
 private:
-  Config &config_; // 配置引用
+  Config config_; // 配置引用
 
 private:
   std::ofstream logFile_;                      // 当前的日志文件输出流
   atomic<bool> isStop_{true};                  // 是否关闭
   steady_clock::time_point lastFileFlushTime_; // 上次文件刷新时间
   mutable mutex fileMtx_;                      // 保证文件写入不会乱序
-  mutable std::mutex flushSerializerMtx_;      // 保证刷新操作的原子性发起用于
-  mutable std::mutex flushMtx_;                //  完成等待 时的线程同步
-  std::condition_variable flushCv_;            // 用于等待刷新完成的线程同步
-  std::atomic<int> flushRequestCount_{0};      // 刷新请求计数(console/file)
+  mutable std::mutex flushSerializerMtx_; // 保证刷新操作的原子性发起用于
+  mutable std::mutex flushMtx_;           //  完成等待 时的线程同步
+  std::condition_variable flushCv_; // 用于等待刷新完成的线程同步
+  std::atomic<int> flushRequestCount_{0}; // 刷新请求计数(console/file)
   const std::string FLUSH_COMMAND_ = "__FLUSH_COMMAND__"; // 刷新命令
 
 private:
@@ -193,57 +153,35 @@ private:
 
 private:
   // 日志文件轮转相关
-  string currentLogFilePath_;                 // 当前日志文件完整路径
-  RotationType rotationType_;                 // 轮转类型
-  string lastRotationDate_;                   // 上次轮转的日期(用于按时间轮转)
-  atomic<bool> isRotating_;                   // 是否正在轮转
-  atomic<int> rotateCounts_;                  // 轮转次数
+  string currentLogFilePath_; // 当前日志文件完整路径
+  RotationType rotationType_; // 轮转类型
+  string lastRotationDate_;   // 上次轮转的日期(用于按时间轮转)
+  atomic<bool> isRotating_;   // 是否正在轮转
+  atomic<int> rotateCounts_;  // 轮转次数
   atomic<size_t> currentFileWrittenBytes_{0}; // 当前文件已写入字节数
-
-#if defined(CLOUD_INCLUDE)
-private:
-  unique_ptr<CloudUploader> cloudUploader_; // 云上传器
-#endif
 
 }; // class AsyncLogSystem
 
-inline void AsyncLogSystem::Init() {
+inline void AsyncLogSystem::Init(const Config &config) {
   // 还在运行, 不初始化
   if (!isStop_.exchange(false)) {
     return;
   }
-  consoleQue_ = make_unique<LogQueue>(config_.basic.maxQueueSize);
-  fileQue_ = make_unique<LogQueue>(config_.basic.maxQueueSize);
+  config_ = config;
+  consoleQue_ = make_unique<LogQueue>(config_);
+  fileQue_ = make_unique<LogQueue>(config_);
   rotationType_ = RotationType::BY_SIZE_AND_TIME;
   lastFileFlushTime_ = std::chrono::steady_clock::now();
   rotateCounts_ = 0;
 
   if (config_.output.toFile) {
     if (initializeLogFile()) {
-      lyf_Internal_LOG(
-          "[LogSystem] Log system initialized. Current log file: {}",
-          currentLogFilePath_);
+      lyf_inner_log("[LogSystem] Log system initialized. Current log file: {}",
+                    currentLogFilePath_);
     } else {
-      lyf_Internal_LOG("[LogSystem] Failed to initialize log file.");
+      lyf_inner_log("[LogSystem] Failed to initialize log file.");
       config_.output.toFile = false;
     }
-  }
-
-  if (config_.cloud.enable) {
-#if defined(CLOUD_INCLUDE)
-    cloudUploader_ = make_unique<CloudUploader>();
-    cloudUploader_->start();
-
-    if (!cloudUploader_->ping()) {
-      lyf_Internal_LOG(
-          "[LogSystem] Cloud upload enabled, serverUrl: {} is not available.",
-          config_.cloud.serverUrl);
-      config_.cloud.enable = false;
-    } else {
-      lyf_Internal_LOG("[LogSystem] Cloud upload enabled, serverUrl: {}",
-                       config_.cloud.serverUrl);
-    }
-#endif
   }
 
   // 启动控制台输出线程
@@ -261,10 +199,6 @@ inline void AsyncLogSystem::Stop() {
   if (!isStop_.compare_exchange_strong(expected, true)) {
     return;
   }
-
-  consoleQue_->Stop();
-  fileQue_->Stop();
-
   // 等待工作线程完成
   if (consoleWorker_.joinable()) {
     consoleWorker_.join();
@@ -280,12 +214,6 @@ inline void AsyncLogSystem::Stop() {
       logFile_.flush();
     }
   }
-  // 停止云端上传器
-#if defined(CLOUD_INCLUDE)
-  if (cloudUploader_) {
-    cloudUploader_->stop();
-  }
-#endif
 
   if (logFile_.is_open()) {
     logFile_.close();
@@ -294,8 +222,9 @@ inline void AsyncLogSystem::Stop() {
   // 输出系统关闭信息到控制台
   if (config_.output.toConsole) {
     // 红色字体
-    lyf_Internal_LOG("[LogSystem] Log system closed.");
+    lyf_inner_log("[LogSystem] Log system closed.");
   }
+  std::source_location loc;
 }
 
 inline void AsyncLogSystem::Flush() {
@@ -307,7 +236,9 @@ inline void AsyncLogSystem::Flush() {
   std::unique_lock<std::mutex> flush_lock(flushMtx_);
 
   int active_workers = 0;
-  LogMessage flush_cmd(LogLevel::INFO, FLUSH_COMMAND_);
+  LogMessage flush_cmd(LogLevel::INFO, __FILE__, __LINE__,
+                       std::hash<std::thread::id>()(std::this_thread::get_id()),
+                       FLUSH_COMMAND_);
 
   if (config_.output.toConsole && consoleQue_) {
     active_workers++;
@@ -328,27 +259,10 @@ inline void AsyncLogSystem::Flush() {
   flushCv_.wait(flush_lock, [this] { return flushRequestCount_.load() == 0; });
 }
 
-template <typename... Args>
-inline void AsyncLogSystem::Log(LogLevel level, const string &fmt,
-                                Args &&...args) {
-  if (isStop_ || static_cast<int>(level) < config_.output.minLogLevel) {
-    return;
-  }
-  auto msg = LogMessage(level, FormatMessage(fmt, std::forward<Args>(args)...));
-
-  // 分发到不同对列
-  if (config_.output.toConsole) {
-    consoleQue_->Push(LogMessage(msg)); // 复制一份给控制台
-  }
-  if (config_.output.toFile) {
-    fileQue_->Push(std::move(msg)); // 直接移动给文件队列,提高性能
-  }
-}
-
 inline void AsyncLogSystem::forceRotation() {
   if (rotateLogFile()) {
-    lyf_Internal_LOG("[LogSystem] Manual log rotation completed. New file: {}",
-                     currentLogFilePath_);
+    lyf_inner_log("[LogSystem] Manual log rotation completed. New file: {}",
+                  currentLogFilePath_);
   }
 }
 
@@ -404,8 +318,8 @@ inline bool AsyncLogSystem::initializeLogFile() {
     // 创建日志目录
     if (!std::filesystem::exists(config_.output.logRootDir)) {
       std::filesystem::create_directories(config_.output.logRootDir);
-      lyf_Internal_LOG("[LogSystem] Created log directory: {}",
-                       config_.output.logRootDir);
+      lyf_inner_log("[LogSystem] Created log directory: {}",
+                    config_.output.logRootDir);
     }
     // 根据轮转类型生成文件名
     if (rotationType_ == RotationType::BY_TIME ||
@@ -507,25 +421,9 @@ inline bool AsyncLogSystem::rotateLogFile() {
       return false;
     }
     logFile_.flush();
-#if defined(CLOUD_INCLUDE)
-    // 上传旧日志文件
-    if (std::filesystem::exists(oldLogFilePath) && isCloudUploadEnabled()) {
-      bool success = cloudUploader_->scheduleUpload(oldLogFilePath);
-      if (success) {
-        if (config_.cloud.deleteAfterUpload) {
-          std::filesystem::remove(oldLogFilePath);
-        }
-        lyf_Internal_LOG("[LogSystem] Uploaded old log file: {}",
-                         oldLogFilePath);
-      } else {
-        lyf_Internal_LOG("[LogSystem] Failed to upload old log file: {}",
-                         oldLogFilePath);
-      }
-    }
-#endif
     // 清理旧日志文件
     cleanupOldLogFiles();
-    lyf_Internal_LOG("[LogSystem] Old log files cleaned up.");
+    lyf_inner_log("[LogSystem] Old log files cleaned up.");
     // 增加轮转次数
     ++rotateCounts_;
     currentFileWrittenBytes_.store(0, std::memory_order_relaxed);
@@ -561,11 +459,11 @@ inline void AsyncLogSystem::cleanupOldLogFiles() {
     for (size_t i = config_.rotation.maxFileCount; i < logFiles.size(); ++i) {
       try {
         std::filesystem::remove(logFiles[i]);
-        lyf_Internal_LOG("[LogSystem] Removed old log file: {}",
-                         logFiles[i].c_str());
+        lyf_inner_log("[LogSystem] Removed old log file: {}",
+                      logFiles[i].c_str());
       } catch (const std::exception &e) {
-        lyf_Internal_LOG("[LogSystem] Failed to remove old log file {}: {}",
-                         logFiles[i].c_str(), e.what());
+        lyf_inner_log("[LogSystem] Failed to remove old log file {}: {}",
+                      logFiles[i].c_str(), e.what());
       }
     }
   } catch (const std::exception &e) {
@@ -574,14 +472,14 @@ inline void AsyncLogSystem::cleanupOldLogFiles() {
 }
 
 inline void AsyncLogSystem::ConsoleWorkerLoop() {
-  LogQueue::QueueType batchQueue; // 当前批次的日志消息队列
+  LogQueue::OutputQueType batchQueue; // 当前批次的日志消息队列
   std::string buffer;
   buffer.reserve(1024 *
                  config_.performance.consoleBufferSize_kb); // 预分配缓冲区
 
   auto work = [&]() {
     ProcessConsoleBatch(batchQueue, buffer);
-    batchQueue = LogQueue::QueueType();
+    batchQueue = LogQueue::OutputQueType();
     buffer.clear();
   };
 
@@ -605,13 +503,13 @@ inline void AsyncLogSystem::ConsoleWorkerLoop() {
 }
 
 inline void AsyncLogSystem::FileWorkerLoop() {
-  LogQueue::QueueType batchQueue; // 当前批次的日志消息队列
+  LogQueue::OutputQueType batchQueue; // 当前批次的日志消息队列
   std::string buffer;
   buffer.reserve(1024 * config_.performance.fileBufferSize_kb); // 预分配缓冲区
 
   auto work = [&]() {
     ProcessFileBatch(batchQueue, buffer);
-    batchQueue = LogQueue::QueueType();
+    batchQueue = LogQueue::OutputQueType();
     buffer.clear();
   };
 
@@ -633,8 +531,9 @@ inline void AsyncLogSystem::FileWorkerLoop() {
   }
 }
 
-inline void AsyncLogSystem::ProcessConsoleBatch(LogQueue::QueueType &batchQueue,
-                                                std::string &buffer) {
+inline void
+AsyncLogSystem::ProcessConsoleBatch(LogQueue::OutputQueType &batchQueue,
+                                    std::string &buffer) {
   if (batchQueue.empty()) {
     return;
   }
@@ -662,8 +561,10 @@ inline void AsyncLogSystem::ProcessConsoleBatch(LogQueue::QueueType &batchQueue,
     }
 
     buffer += LevelColor(msg.level);
-    buffer +=
-        "[" + FormatTime(msg.time) + "] [" + LevelToString(msg.level) + "] ";
+    buffer += FormatTime(msg.time) + " " + LevelToString(msg.level) + " " +
+              std::to_string(msg.hash_tid) + " ";
+    buffer += msg.file_name;
+    buffer += ":" + std::to_string(msg.file_line) + " ";
     buffer += msg.content;
     buffer += "\033[0m\n";
 
@@ -685,8 +586,9 @@ inline void AsyncLogSystem::ProcessConsoleBatch(LogQueue::QueueType &batchQueue,
   }
 }
 
-inline void AsyncLogSystem::ProcessFileBatch(LogQueue::QueueType &batchQueue,
-                                             std::string &buffer) {
+inline void
+AsyncLogSystem::ProcessFileBatch(LogQueue::OutputQueType &batchQueue,
+                                 std::string &buffer) {
   if (batchQueue.empty()) {
     return;
   }
@@ -730,15 +632,17 @@ inline void AsyncLogSystem::ProcessFileBatch(LogQueue::QueueType &batchQueue,
         buffer.clear();
       }
       if (rotateLogFile()) {
-        lyf_Internal_LOG("[LogSystem] Log rotated to: {}", currentLogFilePath_);
+        lyf_inner_log("[LogSystem] Log rotated to: {}", currentLogFilePath_);
       }
     }
 
     auto msg = std::move(batchQueue.front());
     batchQueue.pop_front();
 
-    std::string msgStr = "[" + FormatTime(msg.time) + "] [" +
-                         LevelToString(msg.level) + "] " + msg.content + "\n";
+    std::string msgStr = FormatTime(msg.time) + " " + LevelToString(msg.level) +
+                         " " + std::to_string(msg.hash_tid) + " ";
+    msgStr.append(msg.file_name);
+    msgStr += ":" + std::to_string(msg.file_line) + " " + msg.content + "\n";
 
     // 避免缓冲区无限增长
     if (buffer.size() + msgStr.size() > 1024 * 64) {
@@ -763,14 +667,34 @@ inline void AsyncLogSystem::ProcessFileBatch(LogQueue::QueueType &batchQueue,
   }
 }
 
-#if _LIBCPP_STD_VER >= 20
+#if __cplusplus >= 202002L
 template <FixedString fmt, typename... Args>
-inline void AsyncLogSystem::Faster_Log(LogLevel level, Args &&...args) {
+inline void AsyncLogSystem::Log(LogLevel level, const char *file_name,
+                                size_t file_line, size_t thread_id,
+                                Args &&...args) {
   if (isStop_ || static_cast<int>(level) < config_.output.minLogLevel) {
     return;
   }
   // 采用编译期格式化版本
-  auto msg = LogMessage(level, FormatMessage<fmt>(std::forward<Args>(args)...));
+  auto msg = LogMessage(level, file_name, file_line, thread_id,
+                        FormatMessage<fmt>(std::forward<Args>(args)...));
+  // 分发到不同对列
+  if (config_.output.toConsole) {
+    consoleQue_->Push(LogMessage(msg)); // 复制一份给控制台
+  }
+  if (config_.output.toFile) {
+    fileQue_->Push(std::move(msg)); // 直接移动给文件队列,提高性能
+  }
+}
+
+#else
+template <typename... Args>
+inline void AsyncLogSystem::Log(LogLevel level, const string &fmt,
+                                Args &&...args) {
+  if (isStop_ || static_cast<int>(level) < config_.output.minLogLevel) {
+    return;
+  }
+  auto msg = LogMessage(level, FormatMessage(fmt, std::forward<Args>(args)...));
 
   // 分发到不同对列
   if (config_.output.toConsole) {
@@ -780,6 +704,7 @@ inline void AsyncLogSystem::Faster_Log(LogLevel level, Args &&...args) {
     fileQue_->Push(std::move(msg)); // 直接移动给文件队列,提高性能
   }
 }
+
 #endif
 
 } // namespace lyf

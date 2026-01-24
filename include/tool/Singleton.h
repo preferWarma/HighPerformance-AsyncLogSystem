@@ -7,7 +7,7 @@ template <typename T> class Singleton {
 public:
   // 强制内联，减少函数调用开销
   [[nodiscard]] static T &
-  GetInstance() noexcept(std::is_nothrow_constructible_v<T>) {
+  Instance() noexcept(std::is_nothrow_constructible_v<T>) {
     static T instance;
     return instance;
   }
