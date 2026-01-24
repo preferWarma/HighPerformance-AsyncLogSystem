@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Config.h"
-#include "Enum.h"
 #include "third/concurrentqueue.h"
 
 #include <atomic>

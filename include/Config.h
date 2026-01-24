@@ -1,14 +1,10 @@
 #pragma once
-#include "Enum.h"
-#include "Helper.h"
-#include "JsonHelper.h"
-#include "Singleton.h"
-#include "Timer.h"
+#include "tool/Enum.h"
+#include "tool/Singleton.h"
+#include "tool/Timer.h"
+#include "tool/Utility.h"
 #include <filesystem>
 #include <string>
-
-// 是否编译云存储模块
-// #define CLOUD_INCLUDE
 
 namespace lyf {
 using std::string;
@@ -26,8 +22,8 @@ public:
   struct BasicConfig {
     size_t maxQueueSize; // 日志缓存队列初始时最大长度限制(0表示无限制)
     QueueFullPolicy queueFullPolicy; // 队列满时的处理策略(默认:BLOCK)
-    size_t maxBlockTime_us; // 队列满时主线程阻塞最大时间，超过则会自动扩容
-    size_t maxDropCount; // 队列满时丢弃最大数量，超过则会自动扩容
+    size_t maxBlockTime_us;    // 队列满时主线程阻塞最大时间，超过则会自动扩容
+    size_t maxDropCount;       // 队列满时丢弃最大数量，超过则会自动扩容
     size_t autoExpandMultiply; // 最大自动扩容倍数（以初始的最大队列长度为基准）
   } basic;
 
@@ -35,7 +31,7 @@ public:
     string logRootDir; // 日志根目录
     bool toFile;       // 是否输出到文件
     bool toConsole;    // 是否输出到控制台
-    int minLogLevel; // 最小日志级别(0:DEBUG,1:INFO,2:WARNING,3:ERROR,4:FATAL)
+    int minLogLevel;   // 最小日志级别(0:DEBUG,1:INFO,2:WARNING,3:ERROR,4:FATAL)
   } output;
 
   struct PerformanceConfig {

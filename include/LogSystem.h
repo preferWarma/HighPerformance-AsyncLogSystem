@@ -1,10 +1,7 @@
 #pragma once
 
-#include "Config.h"
-#include "FastFormater.h"
-#include "Helper.h"
 #include "LogQue.h"
-#include "Singleton.h"
+#include "tool/FastFormater.h"
 
 #if defined(CLOUD_INCLUDE)
 #include "CloudUploader.h"
@@ -182,10 +179,10 @@ private:
   atomic<bool> isStop_{true};                  // 是否关闭
   steady_clock::time_point lastFileFlushTime_; // 上次文件刷新时间
   mutable mutex fileMtx_;                      // 保证文件写入不会乱序
-  mutable std::mutex flushSerializerMtx_; // 保证刷新操作的原子性发起用于
-  mutable std::mutex flushMtx_;           //  完成等待 时的线程同步
-  std::condition_variable flushCv_; // 用于等待刷新完成的线程同步
-  std::atomic<int> flushRequestCount_{0}; // 刷新请求计数(console/file)
+  mutable std::mutex flushSerializerMtx_;      // 保证刷新操作的原子性发起用于
+  mutable std::mutex flushMtx_;                //  完成等待 时的线程同步
+  std::condition_variable flushCv_;            // 用于等待刷新完成的线程同步
+  std::atomic<int> flushRequestCount_{0};      // 刷新请求计数(console/file)
   const std::string FLUSH_COMMAND_ = "__FLUSH_COMMAND__"; // 刷新命令
 
 private:
@@ -196,11 +193,11 @@ private:
 
 private:
   // 日志文件轮转相关
-  string currentLogFilePath_; // 当前日志文件完整路径
-  RotationType rotationType_; // 轮转类型
-  string lastRotationDate_;   // 上次轮转的日期(用于按时间轮转)
-  atomic<bool> isRotating_;   // 是否正在轮转
-  atomic<int> rotateCounts_;  // 轮转次数
+  string currentLogFilePath_;                 // 当前日志文件完整路径
+  RotationType rotationType_;                 // 轮转类型
+  string lastRotationDate_;                   // 上次轮转的日期(用于按时间轮转)
+  atomic<bool> isRotating_;                   // 是否正在轮转
+  atomic<int> rotateCounts_;                  // 轮转次数
   atomic<size_t> currentFileWrittenBytes_{0}; // 当前文件已写入字节数
 
 #if defined(CLOUD_INCLUDE)
@@ -362,7 +359,7 @@ inline std::vector<std::string> AsyncLogSystem::getLogFiles() const {
          std::filesystem::directory_iterator(config_.output.logRootDir)) {
       if (entry.is_regular_file()) {
         std::string filename = entry.path().filename().string();
-        if (StartWith(filename, "log_") && EndWith(filename, ".log")) {
+        if (starts_with(filename, "log_") && ends_with(filename, ".log")) {
           files.push_back(entry.path().string());
         }
       }

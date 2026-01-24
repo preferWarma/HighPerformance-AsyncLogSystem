@@ -1,5 +1,4 @@
 #include "Singleton.h"
-#include "Helper.h"
 #include "third/json.hpp" // nlohmann json库
 
 #include <filesystem>
@@ -8,13 +7,30 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
+#ifdef LYF_lyf_Internal_LOG
+#include "FastFormater.h"
+#include <iostream>
+#if _LIBCPP_STD_VER >= 20
+#define lyf_Internal_LOG(fmt, ...)                                             \
+  std::cout << FormatMessage<fmt>(__VA_ARGS__) << std::endl;
+#else
+#define lyf_Internal_LOG(fmt, ...)                                             \
+  std::cout << FormatMessage(fmt, ##__VA_ARGS__) << std::endl;
+#endif
+#else
+#define lyf_Internal_LOG(fmt, ...) ((void)0)
+#endif
+
 namespace lyf {
+namespace fs = std::filesystem;
+namespace chrono = std::chrono;
 
 using std::string, std::vector, std::shared_ptr;
 using json = nlohmann::json;
-namespace fs = std::filesystem;
+using system_clock = chrono::system_clock;
 
 class JsonHelper : public Singleton<JsonHelper> {
   friend class Singleton<JsonHelper>;
@@ -33,7 +49,7 @@ public:
     } else {
       // 如果文件不存在，创建一个空的json对象
       lyf_Internal_LOG(">>>>>>配置文件不存在，将创建一个空的配置文件: {}\n",
-                      config_file_path.c_str());
+                       config_file_path.c_str());
       config_data = json::object();
     }
   }
@@ -51,10 +67,9 @@ public: // 加载和保存操作
       config_data = json::parse(file);
       size_t top_level_keys = config_data.size();
       size_t total_properties = CountLeafProperties(config_data);
-      lyf_Internal_LOG(
-          ">>>>>>配置文件({})加载成功: 共{}个配置, {}个配置属性\n",
-          fs::absolute(config_file_path).c_str(), top_level_keys,
-          total_properties);
+      lyf_Internal_LOG(">>>>>>配置文件({})加载成功: 共{}个配置, {}个配置属性\n",
+                       fs::absolute(config_file_path).c_str(), top_level_keys,
+                       total_properties);
       return true;
     } catch (const json::parse_error &e) {
       lyf_Internal_LOG("JSON解析失败: {}\n", e.what());
@@ -76,8 +91,8 @@ public: // 加载和保存操作
     file << config_data.dump(4) << std::endl;
     file.close();
     lyf_Internal_LOG("配置文件保存成功: {}, 共{}个配置, {}个配置属性\n",
-                    fs::absolute(config_file_path).c_str(), config_data.size(),
-                    CountLeafProperties(config_data));
+                     fs::absolute(config_file_path).c_str(), config_data.size(),
+                     CountLeafProperties(config_data));
     return true;
   }
 
@@ -93,7 +108,7 @@ public: // 加载和保存操作
         fs::absolute(other_path) != fs::absolute(config_file_path)) {
       SetFilePath(other_path);
       lyf_Internal_LOG(">>>>>>配置文件已更新为: {}\n",
-                      fs::absolute(config_file_path).c_str());
+                       fs::absolute(config_file_path).c_str());
     }
     return LoadFromFile();
   }
@@ -112,7 +127,7 @@ public: // 配置项操作
       return default_value;
     } catch (const json::type_error &) {
       lyf_Internal_LOG("配置项 '{}' 类型不匹配，期望类型: {}\n", key.c_str(),
-                      typeid(T).name());
+                       typeid(T).name());
       return default_value;
     }
   }
@@ -274,5 +289,89 @@ private:
     return ptr;
   }
 };
+
+/// @brief 获取当前时间戳
+/// @return 当前时间戳
+/// @note 单位为毫秒
+inline int64_t GetCurrentTimeStamp() {
+  return duration_cast<chrono::milliseconds>(
+             system_clock::now().time_since_epoch())
+      .count();
+}
+
+/// @brief 获取当前时间的格式化字符串
+/// @param format 时间格式字符串, 默认为"%Y-%m-%d %H:%M:%S"
+/// @return 格式化后的时间字符串
+inline string GetCurrentTime(const string &format = "%Y-%m-%d %H:%M:%S") {
+  auto now = system_clock::now();
+  auto time_t = system_clock::to_time_t(now);
+  std::stringstream ss;
+  // 线程安全的时间格式化函数
+  ss << std::put_time(std::localtime(&time_t), format.c_str());
+  return ss.str();
+}
+
+/// @brief 格式化时间点为字符串
+/// @param timePoint 时间点
+/// @param format 时间格式字符串, 默认为"%Y-%m-%d %H:%M:%S"
+/// @return 格式化后的时间字符串
+inline string FormatTime(const system_clock::time_point &timePoint,
+                         const string &format = "%Y-%m-%d %H:%M:%S") {
+  std::time_t time = system_clock::to_time_t(timePoint);
+  char buf[1024];
+  strftime(buf, sizeof(buf), format.c_str(), localtime(&time));
+  return buf;
+}
+
+/// @brief RAII 确保标志被重置
+class FlagGuard {
+public:
+  FlagGuard(std::atomic<bool> &flag) : _flag(flag) {}
+  ~FlagGuard() { _flag.store(false); }
+
+private:
+  std::atomic<bool> &_flag;
+};
+
+/// @brief 创建日志目录
+/// @param path 日志文件路径
+/// @return 创建成功返回true, 否则返回false
+inline bool CreateLogDirectory(const string &path) {
+  try {
+    auto dir = std::filesystem::path(path).parent_path();
+    if (!std::filesystem::exists(dir)) {
+      std::filesystem::create_directories(dir);
+    }
+    return true;
+  } catch (const std::exception &e) {
+    lyf_Internal_LOG("Failed to create log directory: {}\n", e.what());
+    return false;
+  }
+}
+
+/// @brief 获取文件上一次修改时间
+/// @param filePath 文件路径
+/// @return 文件上一次修改时间
+inline std::filesystem::file_time_type
+getFileLastWriteTime(const string &filePath) {
+  try {
+    return std::filesystem::last_write_time(filePath);
+  } catch (const std::exception &e) {
+    lyf_Internal_LOG("Failed to get last write time: {}\n", e.what());
+    return std::filesystem::file_time_type::min();
+  }
+}
+
+[[nodiscard]] constexpr bool starts_with(std::string_view sv,
+                                         std::string_view prefix) noexcept {
+  return sv.size() >= prefix.size() &&
+         sv.compare(0, prefix.size(), prefix) == 0;
+}
+
+[[nodiscard]] constexpr bool ends_with(std::string_view sv,
+                                       std::string_view suffix) noexcept {
+  return sv.size() >= suffix.size() &&
+         sv.compare(sv.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
 
 } // namespace lyf
