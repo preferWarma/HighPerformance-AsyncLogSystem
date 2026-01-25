@@ -1,5 +1,5 @@
 [basic]
-maxQueueSize = 81920
+maxQueueSize = 0
 queueFullPolicy = "BLOCK"
 maxBlockTime_us = 16
 maxDropCount = 40960
@@ -14,12 +14,12 @@ minLogLevel = 0
 [performance]
 enableAsyncConsole = true
 consoleFlushInterval_ms = 50
-fileFlushInterval_ms = 100
+fileFlushInterval_ms = 1000
 consoleBatchSize = 512
-fileBatchSize = 1024
+fileBatchSize = 4096
 consoleBufferSize_kb = 16
-fileBufferSize_kb = 32
+fileBufferSize_kb = 1024
 
 [rotation]
-maxLogFileSize = 999999999
+maxLogFileSize = 9999999999
 maxLogFileCount = 10

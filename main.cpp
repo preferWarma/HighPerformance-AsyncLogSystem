@@ -1,12 +1,14 @@
 // #define LYF_INNER_LOG
 
+#include "Config.h"
 #include "LogSystem.h"
+#include "third/toml.hpp"
 #include "tool/Timer.h"
 #include <fstream>
 #include <iostream>
 
 using namespace lyf;
-constexpr int kLogCount = 1e6;
+constexpr int kLogCount = 1e7;
 
 void truncateLogFile(const std::string &logfile) {
   std::fstream ofs(logfile, std::ios::out | std::ios::trunc);
@@ -15,8 +17,11 @@ void truncateLogFile(const std::string &logfile) {
 
 int main() {
   INIT_LOG_SYSTEM("config.toml");
+  std::cout << AsyncLogSystem::Instance().getConfig().data() << std::endl;
+
   // 清空当前日志文件
   auto logfile = AsyncLogSystem::Instance().getCurrentLogFilePath();
+  std::cout << "logfile: " << logfile << std::endl;
   truncateLogFile(logfile);
   // 计时器
   stopwatch sw_total(stopwatch::TimeType::s);

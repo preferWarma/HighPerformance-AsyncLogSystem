@@ -74,6 +74,7 @@ public:
   size_t GetListenID() const { return listen_id_; }
 
   LogConfig(const LogConfig &other) {
+    cfg_data_ = other.cfg_data_;
     basic = other.basic;
     output = other.output;
     performance = other.performance;
@@ -84,6 +85,7 @@ public:
   }
   LogConfig &operator=(const LogConfig &other) {
     if (this != &other) {
+      cfg_data_ = other.cfg_data_;
       basic = other.basic;
       output = other.output;
       performance = other.performance;

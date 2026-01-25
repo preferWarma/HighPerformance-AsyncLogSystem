@@ -168,7 +168,7 @@ inline void AsyncLogSystem::Init(const LogConfig &config) {
   config_ = config;
   consoleQue_ = make_unique<LogQueue>(config_);
   fileQue_ = make_unique<LogQueue>(config_);
-  rotationType_ = RotationType::BY_SIZE_AND_TIME;
+  rotationType_ = RotationType::BY_TIME;
   lastFileFlushTime_ = std::chrono::steady_clock::now();
   rotateCounts_ = 0;
 
