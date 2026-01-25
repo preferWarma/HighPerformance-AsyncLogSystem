@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON) # C++标准要求
 set(CMAKE_CXX_STANDARD 20) # 设置C++标准版本
 
 # 使用 o2 优化
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
 # 在配置阶段执行命令，将配置文件复制到build文件夹下
 execute_process(COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/config.toml ${CMAKE_BINARY_DIR}/config.toml)

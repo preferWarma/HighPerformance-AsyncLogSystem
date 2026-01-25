@@ -15,13 +15,12 @@
 #include <memory>
 #include <mutex>
 #include <ostream>
-#include <source_location>
 #include <string_view>
 #include <utility>
 
 // 初始化日志系统
 #define INIT_LOG_SYSTEM(cfg_path_)                                             \
-  lyf::AsyncLogSystem::Instance().Init(lyf::Config(cfg_path_))
+  lyf::AsyncLogSystem::Instance().Init(lyf::LogConfig(cfg_path_))
 
 // 日志调用宏
 #if __cplusplus >= 202002L
@@ -29,19 +28,19 @@
   lyf::AsyncLogSystem::Instance().Log<fmt>(                                    \
       level, __FILE__, __LINE__,                                               \
       std::hash<std::thread::id>()(std::this_thread::get_id()), ##__VA_ARGS__)
+#else
+#define LOG_IMPL(level, fmt, ...)                                              \
+  lyf::AsyncLogSystem::Instance().Log(                                         \
+      level, __FILE__, __LINE__,                                               \
+      std::hash<std::thread::id>()(std::this_thread::get_id()), fmt,           \
+      ##__VA_ARGS__)
+#endif
+
 #define LOG_DEBUG(fmt, ...) LOG_IMPL(LogLevel::DEBUG, fmt, ##__VA_ARGS__)
 #define LOG_INFO(fmt, ...) LOG_IMPL(LogLevel::INFO, fmt, ##__VA_ARGS__)
 #define LOG_WARN(fmt, ...) LOG_IMPL(LogLevel::WARN, fmt, ##__VA_ARGS__)
 #define LOG_ERROR(fmt, ...) LOG_IMPL(LogLevel::ERROR, fmt, ##__VA_ARGS__)
 #define LOG_FATAL(fmt, ...) LOG_IMPL(LogLevel::FATAL, fmt, ##__VA_ARGS__)
-
-#else
-#define LOG_DEBUG(...) lyf::AsyncLogSystem::Instance().Debug(__VA_ARGS__)
-#define LOG_INFO(...) lyf::AsyncLogSystem::Instance().Info(__VA_ARGS__)
-#define LOG_WARN(...) lyf::AsyncLogSystem::Instance().Warn(__VA_ARGS__)
-#define LOG_ERROR(...) lyf::AsyncLogSystem::Instance().Error(__VA_ARGS__)
-#define LOG_FATAL(...) lyf::AsyncLogSystem::Instance().Fatal(__VA_ARGS__)
-#endif
 
 namespace lyf {
 using steady_clock = std::chrono::steady_clock;
@@ -56,7 +55,7 @@ class AsyncLogSystem : public Singleton<AsyncLogSystem> {
   };
 
 public:
-  inline void Init(const Config &config);
+  inline void Init(const LogConfig &config);
   inline bool HasInit() const { return !isStop_.load(); }
   inline void Stop();
   inline void Flush();
@@ -70,18 +69,17 @@ public: // 编译期优化(C++20级以上支持)
                   size_t thread_id, Args &&...args);
 #else
   template <typename... Args>
-  inline void Log(LogLevel level, std::string_view file_name, size_t file_line,
+  inline void Log(LogLevel level, const char *file_name, size_t file_line,
                   size_t thread_id, std::string_view fmt, Args &&...args);
 #endif
 
 public:
+  inline LogConfig &getConfig() { return config_; }
   inline string getCurrentLogFilePath() const { return currentLogFilePath_; }
   inline void setRotationType(RotationType type) { rotationType_ = type; }
-
   inline void setMaxFileSize(size_t maxSize) {
     config_.rotation.maxFileSize = maxSize;
   }
-
   inline void setMaxFileCount(int maxCount) {
     config_.rotation.maxFileCount = maxCount;
   }
@@ -132,7 +130,7 @@ private:
   }
 
 private:
-  Config config_; // 配置引用
+  LogConfig config_; // 配置引用
 
 private:
   std::ofstream logFile_;                      // 当前的日志文件输出流
@@ -162,7 +160,7 @@ private:
 
 }; // class AsyncLogSystem
 
-inline void AsyncLogSystem::Init(const Config &config) {
+inline void AsyncLogSystem::Init(const LogConfig &config) {
   // 还在运行, 不初始化
   if (!isStop_.exchange(false)) {
     return;
@@ -224,7 +222,6 @@ inline void AsyncLogSystem::Stop() {
     // 红色字体
     lyf_inner_log("[LogSystem] Log system closed.");
   }
-  std::source_location loc;
 }
 
 inline void AsyncLogSystem::Flush() {
@@ -444,7 +441,7 @@ inline void AsyncLogSystem::cleanupOldLogFiles() {
          std::filesystem::directory_iterator(config_.output.logRootDir)) {
       if (entry.is_regular_file()) {
         std::string filename = entry.path().filename().string();
-        if (filename.starts_with("log_") && filename.ends_with(".log")) {
+        if (starts_with(filename, "log_") && ends_with(filename, ".log")) {
           logFiles.push_back(entry.path());
         }
       }
@@ -689,12 +686,14 @@ inline void AsyncLogSystem::Log(LogLevel level, const char *file_name,
 
 #else
 template <typename... Args>
-inline void AsyncLogSystem::Log(LogLevel level, const string &fmt,
-                                Args &&...args) {
+inline void AsyncLogSystem::Log(LogLevel level, const char *file_name,
+                                size_t file_line, size_t thread_id,
+                                std::string_view fmt, Args &&...args) {
   if (isStop_ || static_cast<int>(level) < config_.output.minLogLevel) {
     return;
   }
-  auto msg = LogMessage(level, FormatMessage(fmt, std::forward<Args>(args)...));
+  auto msg = LogMessage(level, file_name, file_line, thread_id,
+                        FormatMessage(fmt, std::forward<Args>(args)...));
 
   // 分发到不同对列
   if (config_.output.toConsole) {

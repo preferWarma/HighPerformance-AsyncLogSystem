@@ -66,7 +66,7 @@ public:
   using ConcurrentQueueType = moodycamel::ConcurrentQueue<LogMessage>;
   using OutputQueType = std::deque<LogMessage>;
 
-  LogQueue(const lyf::Config &config)
+  LogQueue(const lyf::LogConfig &config)
       : cfg_(config), queue_(config.basic.maxQueueSize), dropCount_(0),
         currentMaxQueueSize_(cfg_.basic.maxQueueSize) {}
 
@@ -119,7 +119,7 @@ private:
   }
 
 private:
-  const lyf::Config &cfg_;
+  const lyf::LogConfig &cfg_;
   ConcurrentQueueType queue_;
   std::atomic<size_t> dropCount_;
   std::atomic<size_t> currentMaxQueueSize_;
