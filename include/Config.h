@@ -57,6 +57,19 @@ public:
     size_t maxFileCount; // 保留最近文件数量
   } rotation;
 
+  struct HttpConfig {
+    string url;             // HTTP服务器URL
+    string endpoint;        // API端点
+    string contentType;     // 内容类型
+    int timeout_sec;        // 超时时间(秒)
+    int maxRetries;         // 最大重试次数
+    size_t batchSize;       // 批量发送大小
+    size_t bufferSize_kb;   // 缓冲区大小(KB)
+    bool enableCompression; // 是否启用压缩
+    bool enableAsync;       // 是否启用异步
+    bool toHttp;            // 是否输出到HTTP
+  } http;
+
   LogConfig() = default;
   LogConfig(std::string_view config_path, bool autoReload = false,
             size_t reloadInterval_ms = 1000)
@@ -143,6 +156,21 @@ private:
           1024 * 1024 * 10); // 默认10MB
       rotation.maxFileCount =
           cfg_data_["rotation"]["maxLogFileCount"].value_or(10);
+    }
+
+    { // http config
+      http.url = cfg_data_["http"]["url"].value_or("");
+      http.endpoint = cfg_data_["http"]["endpoint"].value_or("/logs");
+      http.contentType =
+          cfg_data_["http"]["contentType"].value_or("application/json");
+      http.timeout_sec = cfg_data_["http"]["timeout_sec"].value_or(30);
+      http.maxRetries = cfg_data_["http"]["maxRetries"].value_or(3);
+      http.batchSize = cfg_data_["http"]["batchSize"].value_or(100);
+      http.bufferSize_kb = cfg_data_["http"]["bufferSize_kb"].value_or(64);
+      http.enableCompression =
+          cfg_data_["http"]["enableCompression"].value_or(false);
+      http.enableAsync = cfg_data_["http"]["enableAsync"].value_or(true);
+      http.toHttp = cfg_data_["http"]["toHttp"].value_or(false);
     }
   }
 

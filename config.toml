@@ -23,3 +23,15 @@ fileBufferSize_kb = 1024
 [rotation]
 maxLogFileSize = 9999999999
 maxLogFileCount = 10
+
+[http]
+url = ""
+endpoint = "/logs"
+contentType = "application/json"
+timeout_sec = 30
+maxRetries = 3
+batchSize = 100
+bufferSize_kb = 64
+enableCompression = false
+enableAsync = true
+toHttp = false

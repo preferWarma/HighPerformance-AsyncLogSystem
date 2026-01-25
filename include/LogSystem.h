@@ -4,6 +4,7 @@
 #include "LogQue.h"
 #include "sink/ConsoleSink.h"
 #include "sink/FileSink.h"
+#include "sink/HttpSink.h"
 #include "sink/SinkManager.h"
 #include "tool/FastFormater.h"
 #include "tool/Singleton.h"
@@ -126,6 +127,7 @@ inline void AsyncLogSystem::Init(const LogConfig &config) {
   // 注册内置Sink工厂
   RegisterSinkFactory("console", make_unique<LogSinkFactory<ConsoleSink>>());
   RegisterSinkFactory("file", make_unique<LogSinkFactory<FileSink>>());
+  RegisterSinkFactory("http", make_unique<LogSinkFactory<HttpSink>>());
 
   // 根据配置添加Sink
   if (config_.output.toConsole) {
@@ -137,6 +139,25 @@ inline void AsyncLogSystem::Init(const LogConfig &config) {
   if (config_.output.toFile) {
     if (AddSink("file")) {
       lyf_inner_log("[LogSystem] File sink initialized.");
+    }
+  }
+
+  if (config_.http.toHttp) {
+    auto httpSink = make_unique<HttpSink>();
+    HttpSink::HttpConfig httpConfig;
+    httpConfig.url = config_.http.url;
+    httpConfig.endpoint = config_.http.endpoint;
+    httpConfig.contentType = config_.http.contentType;
+    httpConfig.timeout_sec = config_.http.timeout_sec;
+    httpConfig.maxRetries = config_.http.maxRetries;
+    httpConfig.batchSize = config_.http.batchSize;
+    httpConfig.bufferSize_kb = config_.http.bufferSize_kb;
+    httpConfig.enableCompression = config_.http.enableCompression;
+    httpConfig.enableAsync = config_.http.enableAsync;
+    httpSink->SetHttpConfig(httpConfig);
+
+    if (AddSink(std::move(httpSink))) {
+      lyf_inner_log("[LogSystem] HTTP sink initialized.");
     }
   }
 

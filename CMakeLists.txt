@@ -13,6 +13,8 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/config.toml
 
 # 添加可执行文件
 add_executable(main main.cpp)
+add_executable(http_sink_example example_http_sink.cpp)
 
 # 添加包含目录
 target_include_directories(main PRIVATE ${PROJECT_SOURCE_DIR}/include) # 添加头文件
+target_include_directories(http_sink_example PRIVATE ${PROJECT_SOURCE_DIR}/include) # 添加头文件
