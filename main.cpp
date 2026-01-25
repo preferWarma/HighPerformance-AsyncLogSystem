@@ -17,7 +17,7 @@ void truncateLogFile(const std::string &logfile) {
 
 int main() {
   INIT_LOG_SYSTEM("config.toml");
-  std::cout << AsyncLogSystem::Instance().getConfig().data() << std::endl;
+  std::cout << AsyncLogSystem::Instance().GetConfig().data() << std::endl;
 
   // 清空当前日志文件
   auto logfile = AsyncLogSystem::Instance().getCurrentLogFilePath();
@@ -25,7 +25,7 @@ int main() {
   truncateLogFile(logfile);
   // 计时器
   stopwatch sw_total(stopwatch::TimeType::s);
-  stopwatch sw_log(stopwatch::TimeType::us);
+  stopwatch sw_log(stopwatch::TimeType::ns);
   stopwatch sw_flush(stopwatch::TimeType::s);
   sw_total.start();
 
@@ -43,7 +43,8 @@ int main() {
 
   sw_total.stop();
   // 计算性能指标
-  std::cout << "avg per log: " << sw_log.duration() / kLogCount << " us"
+  std::cout << "total time: " << sw_total.duration() << " s" << std::endl;
+  std::cout << "avg per log: " << sw_log.duration() / kLogCount << " ns"
             << std::endl;
   std::cout << "Flush time: " << sw_flush.duration() << " s" << std::endl;
   auto logfile_size_MB = std::filesystem::file_size(logfile) / (1024 * 1024);
