@@ -1,0 +1,58 @@
+// LogFormatter.h
+#pragma once
+#include "LogQue.h"
+#include <chrono>
+#include <ctime>
+#include <format>
+#include <vector>
+
+namespace lyf {
+template <size_t N> class FixedBuffer {
+public:
+  std::string_view
+  FormatTime(const std::chrono::system_clock::time_point &timePoint) {
+    std::time_t current_second =
+        std::chrono::system_clock::to_time_t(timePoint);
+
+    if (current_second == last_second_ && length_ > 0) {
+      return std::string_view(buf_, length_);
+    }
+
+    last_second_ = current_second;
+    std::tm tm_buf;
+#ifdef _WIN32
+    localtime_s(&tm_buf, &current_second);
+#else
+    localtime_r(&current_second, &tm_buf);
+#endif
+    length_ = std::strftime(buf_, sizeof(buf_), "%Y-%m-%d %H:%M:%S", &tm_buf);
+    return std::string_view(buf_, length_);
+  }
+
+private:
+  char buf_[N];
+  std::time_t last_second_ = 0;
+  size_t length_ = 0;
+};
+
+class LogFormatter {
+public:
+  void Format(const LogMessage &msg, std::vector<char> &dest) {
+    // 1. static: 保证跨函数调用时，对象不销毁，缓存（last_second_）有效。
+    // 2. thread_local: 保证每个线程有一份独立的副本，彻底消除竞争。
+    static thread_local FixedBuffer<64> tl_time_buffer;
+
+    // 格式化 Header
+    std::string_view time_str = tl_time_buffer.FormatTime(msg.time);
+    std::format_to(std::back_inserter(dest), "{} {} {} {}:{} ", time_str,
+                   LevelToString(msg.level), msg.hash_tid, msg.file_name,
+                   msg.file_line);
+
+    // 追加 Payload
+    auto content = msg.GetContent();
+    dest.insert(dest.end(), content.begin(), content.end());
+    dest.push_back('\n');
+  }
+};
+
+} // namespace lyf

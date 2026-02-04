@@ -5,6 +5,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifdef LYF_INNER_LOG
@@ -78,18 +79,6 @@ inline string GetCurrentTime(const string &format = "%Y-%m-%d %H:%M:%S") {
   // 线程安全的时间格式化函数
   ss << std::put_time(std::localtime(&time_t), format.c_str());
   return ss.str();
-}
-
-/// @brief 格式化时间点为字符串
-/// @param timePoint 时间点
-/// @param format 时间格式字符串, 默认为"%Y-%m-%d %H:%M:%S"
-/// @return 格式化后的时间字符串
-inline string FormatTime(const system_clock::time_point &timePoint,
-                         const string &format = "%Y-%m-%d %H:%M:%S") {
-  std::time_t time = system_clock::to_time_t(timePoint);
-  char buf[1024];
-  strftime(buf, sizeof(buf), format.c_str(), localtime(&time));
-  return buf;
 }
 
 /// @brief RAII 确保标志被重置
