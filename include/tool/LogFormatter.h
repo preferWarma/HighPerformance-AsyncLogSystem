@@ -9,9 +9,10 @@
 namespace lyf {
 template <size_t N> class FixedBuffer {
 public:
-  std::string_view
-  FormatTime(const std::chrono::system_clock::time_point &timePoint) {
-    std::time_t current_time = std::chrono::system_clock::to_time_t(timePoint);
+  std::string_view FormatTime(int64_t timestamp_ns) {
+    auto time_point = std::chrono::system_clock::time_point(
+        std::chrono::system_clock::duration(timestamp_ns));
+    std::time_t current_time = std::chrono::system_clock::to_time_t(time_point);
 
     // 缓存最近格式化结果，避免重复格式化
     if (current_time == last_time_ && length_ > 0) {

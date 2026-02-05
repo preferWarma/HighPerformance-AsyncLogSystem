@@ -2,17 +2,26 @@
 #include "LogQue.h"
 #include "Sink.h"
 
+using namespace std::chrono_literals;
+
 namespace lyf {
 class AsyncLogger {
+  using system_clock = std::chrono::system_clock;
+
 public:
   AsyncLogger(const QueConfig &config) : queue_(config), running_(true) {
+    UpdateNow(); // 初始化粗时间戳
     worker_thread_ = std::thread(&AsyncLogger::WorkerLoop, this);
+    timer_thread_ = std::thread(&AsyncLogger::TimerLoop, this);
   }
 
   ~AsyncLogger() {
     running_ = false;
     if (worker_thread_.joinable()) {
       worker_thread_.join();
+    }
+    if (timer_thread_.joinable()) {
+      timer_thread_.join();
     }
     // Sinks 会在析构时自动 Flush
   }
@@ -37,7 +46,23 @@ public:
   size_t GetDropCount() const { return drop_cnt_; }
   void AddDropCount(size_t cnt) { drop_cnt_.fetch_add(cnt); }
 
+  int64_t GetCoarseTime() {
+    return coarse_time_ns_.load(std::memory_order_relaxed);
+  }
+
 private:
+  void UpdateNow() {
+    coarse_time_ns_.store(system_clock::now().time_since_epoch().count(),
+                          std::memory_order_relaxed);
+  }
+
+  void TimerLoop() {
+    while (running_) {
+      UpdateNow();
+      std::this_thread::sleep_for(1ms);
+    }
+  }
+
   void WorkerLoop() {
     std::vector<LogMessage> buffer_batch;
     buffer_batch.reserve(128); // 预分配
@@ -65,7 +90,7 @@ private:
         buffer_batch.clear();
       } else {
         if (running_) {
-          std::this_thread::sleep_for(std::chrono::microseconds(500));
+          std::this_thread::sleep_for(100us);
         } else {
           break; // running=false 且队列空，彻底退出
         }
@@ -79,6 +104,10 @@ private:
   std::thread worker_thread_;
   std::atomic<size_t> drop_cnt_{0};
   std::vector<std::shared_ptr<ILogSink>> sinks_;
+
+  // 时间更新线程
+  std::thread timer_thread_;
+  std::atomic<int64_t> coarse_time_ns_{0}; // 粗粒度时间戳
 };
 
 } // namespace lyf

@@ -4,8 +4,10 @@
 #include "tool/Singleton.h"
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <future>
 #include <thread>
+#include <vector>
 
 namespace lyf {
 enum class LogLevel {
@@ -52,10 +54,13 @@ class BufferPool : public Singleton<BufferPool> {
   friend class Singleton<BufferPool>;
 
 public:
-  void Init(size_t count = 10000) {
+  void Init(size_t count = 40960) {
+    std::vector<LogBuffer *> batch;
+    batch.reserve(count);
     for (size_t i = 0; i < count; ++i) {
-      pool_.enqueue(new LogBuffer());
+      batch.emplace_back(new LogBuffer());
     }
+    pool_.enqueue_bulk(batch.begin(), count);
   }
 
   LogBuffer *Alloc() {
@@ -73,6 +78,16 @@ public:
     }
   }
 
+  size_t AllocBatch(std::vector<LogBuffer *> &out_bufs, size_t count) {
+    return pool_.try_dequeue_bulk(std::back_inserter(out_bufs), count);
+  }
+
+  void FreeBatch(const std::vector<LogBuffer *> &bufs) {
+    if (!bufs.empty()) {
+      pool_.enqueue_bulk(bufs.begin(), bufs.size());
+    }
+  }
+
 private:
   moodycamel::ConcurrentQueue<LogBuffer *> pool_;
 };
@@ -81,7 +96,7 @@ struct LogMessage {
   constexpr static std::hash<std::thread::id> hash_func;
   using system_clock = std::chrono::system_clock;
 
-  system_clock::time_point time;
+  int64_t time;
   LogLevel level;
   const char *file_name;
   size_t file_line;
@@ -92,12 +107,23 @@ struct LogMessage {
   // 构造函数：接管 buffer
   LogMessage(LogLevel lv, const char *file, size_t line, size_t hash_tid,
              LogBuffer *buf)
-      : time(system_clock::now()), level(lv), file_name(file), file_line(line),
-        hash_tid(hash_tid), buffer_ptr(buf) {}
+      : time(system_clock::now().time_since_epoch().count()), level(lv),
+        file_name(file), file_line(line), hash_tid(hash_tid), buffer_ptr(buf) {}
   LogMessage(LogLevel lv, const char *file, size_t line, std::thread::id tid,
              LogBuffer *buf)
-      : time(system_clock::now()), level(lv), file_name(file), file_line(line),
-        hash_tid(hash_func(tid)), buffer_ptr(buf) {}
+      : time(system_clock::now().time_since_epoch().count()), level(lv),
+        file_name(file), file_line(line), hash_tid(hash_func(tid)),
+        buffer_ptr(buf) {}
+
+  // 显式指定time
+  LogMessage(LogLevel lv, const char *file, size_t line, size_t hash_tid,
+             int64_t time, LogBuffer *buf)
+      : time(time), level(lv), file_name(file), file_line(line),
+        hash_tid(hash_tid), buffer_ptr(buf) {}
+  LogMessage(LogLevel lv, const char *file, size_t line, size_t hash_tid,
+             system_clock::time_point time, LogBuffer *buf)
+      : time(time.time_since_epoch().count()), level(lv), file_name(file),
+        file_line(line), hash_tid(hash_tid), buffer_ptr(buf) {}
 
   // FLUSH 指令专用构造函数
   LogMessage(std::promise<void> *prom)
