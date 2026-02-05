@@ -5,7 +5,17 @@ project(code_template_cmake CXX) # 项目名称 CXX表示C++项目
 set(CMAKE_CXX_STANDARD_REQUIRED ON) # C++标准要求
 set(CMAKE_CXX_STANDARD 20) # 设置C++标准版本
 
-# 使用 o2 优化
+# 启用 Address Sanitizer
+# option(ENABLE_ASAN "Enable Address Sanitizer" OFF)
+
+# if(ENABLE_ASAN)
+#     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
+#         add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
+#         add_link_options(-fsanitize=address)
+#     endif()
+# endif()
+
+# 使用 O3 优化
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
 # 在配置阶段执行命令，将配置文件复制到build文件夹下
@@ -13,8 +23,10 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/config.toml
 
 # 添加可执行文件
 add_executable(main main.cpp)
+
 # add_executable(http_sink_example example_http_sink.cpp)
 
 # 添加包含目录
 target_include_directories(main PRIVATE ${PROJECT_SOURCE_DIR}/include) # 添加头文件
+
 # target_include_directories(http_sink_example PRIVATE ${PROJECT_SOURCE_DIR}/include) # 添加头文件

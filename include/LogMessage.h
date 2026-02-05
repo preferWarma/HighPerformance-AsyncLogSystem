@@ -1,7 +1,6 @@
 #pragma once
 
 #include "third/concurrentqueue.h" // ConcurrentQueue
-#include "tool/Singleton.h"
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -50,11 +49,9 @@ struct LogBuffer {
 };
 
 // 内存池
-class BufferPool : public Singleton<BufferPool> {
-  friend class Singleton<BufferPool>;
-
+class BufferPool {
 public:
-  void Init(size_t count = 65536) {
+  BufferPool(size_t count = 65536) {
     std::vector<LogBuffer *> batch;
     batch.reserve(count);
     for (size_t i = 0; i < count; ++i) {
@@ -103,31 +100,35 @@ struct LogMessage {
   size_t hash_tid;
   LogBuffer *buffer_ptr = nullptr;            // 指向内存池中的 Buffer
   std::promise<void> *sync_promise = nullptr; // 用于通知主线程
+  BufferPool *buffer_pool = nullptr;          // 指向 BufferPool 实例
 
   // 构造函数：接管 buffer
   LogMessage(LogLevel lv, const char *file, size_t line, size_t hash_tid,
-             LogBuffer *buf)
+             LogBuffer *buf, BufferPool *pool)
       : time(system_clock::now().time_since_epoch().count()), level(lv),
-        file_name(file), file_line(line), hash_tid(hash_tid), buffer_ptr(buf) {}
+        file_name(file), file_line(line), hash_tid(hash_tid), buffer_ptr(buf),
+        buffer_pool(pool) {}
   LogMessage(LogLevel lv, const char *file, size_t line, std::thread::id tid,
-             LogBuffer *buf)
+             LogBuffer *buf, BufferPool *pool)
       : time(system_clock::now().time_since_epoch().count()), level(lv),
         file_name(file), file_line(line), hash_tid(hash_func(tid)),
-        buffer_ptr(buf) {}
+        buffer_ptr(buf), buffer_pool(pool) {}
 
   // 显式指定time
   LogMessage(LogLevel lv, const char *file, size_t line, size_t hash_tid,
-             int64_t time, LogBuffer *buf)
+             int64_t time, LogBuffer *buf, BufferPool *pool)
       : time(time), level(lv), file_name(file), file_line(line),
-        hash_tid(hash_tid), buffer_ptr(buf) {}
+        hash_tid(hash_tid), buffer_ptr(buf), buffer_pool(pool) {}
   LogMessage(LogLevel lv, const char *file, size_t line, size_t hash_tid,
-             system_clock::time_point time, LogBuffer *buf)
+             system_clock::time_point time, LogBuffer *buf, BufferPool *pool)
       : time(time.time_since_epoch().count()), level(lv), file_name(file),
-        file_line(line), hash_tid(hash_tid), buffer_ptr(buf) {}
+        file_line(line), hash_tid(hash_tid), buffer_ptr(buf),
+        buffer_pool(pool) {}
 
   // FLUSH 指令专用构造函数
   LogMessage(std::promise<void> *prom)
-      : level(LogLevel::FLUSH), sync_promise(prom), buffer_ptr(nullptr) {
+      : level(LogLevel::FLUSH), sync_promise(prom), buffer_ptr(nullptr),
+        buffer_pool(nullptr) {
     // FLUSH 消息不需要 buffer，也不需要文件名行号
   }
 
@@ -139,17 +140,19 @@ struct LogMessage {
   LogMessage(LogMessage &&other) noexcept
       : time(other.time), level(other.level), file_name(other.file_name),
         file_line(other.file_line), hash_tid(other.hash_tid),
-        buffer_ptr(other.buffer_ptr) {
+        buffer_ptr(other.buffer_ptr), buffer_pool(other.buffer_pool) {
     sync_promise = other.sync_promise;
     buffer_ptr = other.buffer_ptr;
+    buffer_pool = other.buffer_pool;
     other.sync_promise = nullptr;
     other.buffer_ptr = nullptr;
+    other.buffer_pool = nullptr;
   }
 
   LogMessage &operator=(LogMessage &&other) noexcept {
     if (this != &other) {
-      if (buffer_ptr) {
-        BufferPool::Instance().Free(buffer_ptr); // 释放旧的
+      if (buffer_ptr && buffer_pool) {
+        buffer_pool->Free(buffer_ptr); // 释放旧的
       }
       // 复制元数据
       time = other.time;
@@ -159,7 +162,9 @@ struct LogMessage {
       hash_tid = other.hash_tid;
       // 转移 Buffer 所有权
       buffer_ptr = other.buffer_ptr;
+      buffer_pool = other.buffer_pool;
       other.buffer_ptr = nullptr;
+      other.buffer_pool = nullptr;
       sync_promise = other.sync_promise;
       other.sync_promise = nullptr;
     }
@@ -168,8 +173,8 @@ struct LogMessage {
 
   // 析构时自动归还 Buffer 到池子
   ~LogMessage() {
-    if (buffer_ptr) {
-      BufferPool::Instance().Free(buffer_ptr);
+    if (buffer_ptr && buffer_pool) {
+      buffer_pool->Free(buffer_ptr);
     }
   }
 

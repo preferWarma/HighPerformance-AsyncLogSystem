@@ -30,7 +30,7 @@ class Logger : public Singleton<Logger> {
 
 public:
   void Init(const QueConfig &cfg, size_t buf_pool_cnt = 40960) {
-    BufferPool::Instance().Init(buf_pool_cnt);
+    buffer_pool_ = std::make_unique<BufferPool>(buf_pool_cnt);
     impl_ = std::make_unique<AsyncLogger>(cfg);
   }
 
@@ -53,11 +53,13 @@ public:
   }
 
   AsyncLogger *GetImpl() { return impl_.get(); }
+  BufferPool *GetBufferPool() { return buffer_pool_.get(); }
   size_t GetDropCount() const { return impl_->GetDropCount(); }
   LogLevel GetLevel() const { return level_; }
   void SetLevel(LogLevel lv) { level_ = lv; }
 
 private:
+  std::unique_ptr<BufferPool> buffer_pool_;
   std::unique_ptr<AsyncLogger> impl_;
   std::atomic<LogLevel> level_{LogLevel::INFO};
 };
@@ -66,13 +68,16 @@ private:
 class ThreadLocalBufferCache {
 private:
   std::vector<LogBuffer *> cache;
+  BufferPool *pool_;
   static constexpr size_t kBatchSize = 64;
 
 public:
+  ThreadLocalBufferCache(BufferPool *pool) : pool_(pool) {}
+
   ~ThreadLocalBufferCache() {
     // 线程退出，归还所有缓存
-    if (!cache.empty()) {
-      BufferPool::Instance().FreeBatch(cache);
+    if (!cache.empty() && pool_) {
+      pool_->FreeBatch(cache);
     }
   }
 
@@ -87,7 +92,7 @@ public:
 
     // 缓存空，去全局池批发
     cache.reserve(kBatchSize);
-    size_t count = BufferPool::Instance().AllocBatch(cache, kBatchSize);
+    size_t count = pool_->AllocBatch(cache, kBatchSize);
 
     if (count > 0) {
       LogBuffer *buf = cache.back();
@@ -104,8 +109,14 @@ public:
 template <typename... Args>
 void LogSubmit(LogLevel level, const char *file, int line,
                std::format_string<Args...> fmt, Args &&...args) {
+  auto *logger = Logger::Instance().GetImpl();
+  auto *buffer_pool = Logger::Instance().GetBufferPool();
+  if (logger == nullptr || buffer_pool == nullptr) {
+    return;
+  }
+
   // 线程局部缓存, 避免每次都去全局池拿
-  static thread_local ThreadLocalBufferCache tls_buf_cache;
+  static thread_local ThreadLocalBufferCache tls_buf_cache(buffer_pool);
   auto *buf = tls_buf_cache.Get();
 
   // payload 写到缓冲区
@@ -118,13 +129,8 @@ void LogSubmit(LogLevel level, const char *file, int line,
   static thread_local size_t hash_tid_cache =
       LogMessage::hash_func(std::this_thread::get_id());
 
-  auto *logger = Logger::Instance().GetImpl();
-  if (logger == nullptr) {
-    return;
-  }
-
   auto now = logger->GetCoarseTime();
-  LogMessage msg(level, file, line, hash_tid_cache, now, buf);
+  LogMessage msg(level, file, line, hash_tid_cache, now, buf, buffer_pool);
 
   if (!logger->Commit(std::move(msg))) {
     logger->AddDropCount(1);

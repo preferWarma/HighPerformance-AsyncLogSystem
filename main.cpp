@@ -11,6 +11,44 @@
 #include <thread>
 #include <vector>
 
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <sys/types.h>
+#include <unistd.h>
+#elif __linux__
+#include <fstream>
+#endif
+
+void PrintMemoryUsage(const std::string &label) {
+#ifdef __APPLE__
+  task_t task = mach_task_self();
+  struct task_basic_info info;
+  mach_msg_type_number_t size = TASK_BASIC_INFO_COUNT;
+  kern_return_t kerr =
+      task_info(task, TASK_BASIC_INFO, (task_info_t)&info, &size);
+
+  if (kerr == KERN_SUCCESS) {
+    double memory_mb =
+        static_cast<double>(info.resident_size) / 1024.0 / 1024.0;
+    std::cout << label << " - Memory: " << memory_mb << " MB (resident)"
+              << std::endl;
+  } else {
+    std::cout << label << " - Memory: Unable to get memory info" << std::endl;
+  }
+#elif __linux__
+  std::ifstream status("/proc/self/status");
+  std::string line;
+  while (std::getline(status, line)) {
+    if (line.find("VmRSS:") == 0) {
+      std::cout << label << " - " << line << std::endl;
+      break;
+    }
+  }
+#else
+  std::cout << label << " - Memory: Unsupported platform" << std::endl;
+#endif
+}
+
 using namespace lyf;
 
 /*
@@ -97,14 +135,14 @@ static void truncateLogFile(const std::string &logfile) {
 }
 
 static size_t CountLines(const std::string &filename) {
-  std::string cmd = "wc -l < " + filename;
-  FILE *pipe = popen(cmd.c_str(), "r");
-  if (!pipe)
+  std::ifstream file(filename);
+  if (!file.is_open()) {
     return 0;
-  size_t count = 0;
-  fscanf(pipe, "%zu", &count);
-  pclose(pipe);
-  return count;
+  }
+
+  // 统计换行符数量
+  return std::count(std::istreambuf_iterator<char>(file),
+                    std::istreambuf_iterator<char>(), '\n');
 }
 
 static BenchmarkConfig ParseArgs(int argc, char **argv) {
@@ -234,14 +272,19 @@ int main(int argc, char **argv) {
     });
   }
 
+  PrintMemoryUsage("Before benchmark");
+
   uint64_t start_ns = NowNs();
   start_flag.store(true, std::memory_order_release);
   for (auto &th : threads) {
     th.join();
   }
   uint64_t submit_end_ns = NowNs();
+  PrintMemoryUsage("After submit");
+
   Logger::Instance().Sync();
   uint64_t end_ns = NowNs();
+  PrintMemoryUsage("After sync");
 
   auto agg = Aggregate(thread_stats);
   uint64_t total_time_ns = end_ns - start_ns;
