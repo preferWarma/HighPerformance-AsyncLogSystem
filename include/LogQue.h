@@ -14,6 +14,18 @@ enum class QueueFullPolicy {
   DROP = 1   // 队列满时丢弃
 };
 
+inline constexpr std::string_view
+QueueFullPolicyToString(QueueFullPolicy policy) {
+  switch (policy) {
+  case QueueFullPolicy::BLOCK:
+    return "BLOCK";
+  case QueueFullPolicy::DROP:
+    return "DROP";
+  default:
+    return "UNKNOWN";
+  }
+}
+
 struct QueConfig {
   constexpr static size_t kMaxBlockTimeout_us =
       std::chrono::microseconds::max().count();

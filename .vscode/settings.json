@@ -98,7 +98,7 @@
     "editor.formatOnPaste": true, // 控制编辑器是否自动格式化粘贴的内容
     "editor.formatOnType": true, // 控制编辑器在键入一行后是否自动格式化该行
     "editor.formatOnSave": true, // 每次保存时自动格式化
-    "editor.wordWrap": "on", // 自动换行
+    "editor.wordWrap": "off", // 自动换行
     "editor.guides.bracketPairs": true, // 显示括号匹配参考线
     "editor.suggest.snippetsPreventQuickSuggestions": false, // 控制活动代码段是否阻止快速建议。
     "editor.acceptSuggestionOnEnter": "smart", // 控制是否在按下回车键时，自动接受建议。

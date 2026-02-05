@@ -1,85 +1,288 @@
 #include "Logger.h"
-#include "tool/Timer.h"
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <sys/fcntl.h>
-#include <unistd.h>
+#include <string>
+#include <thread>
+#include <vector>
 
 using namespace lyf;
-constexpr int kLogCount = 1e8;
-constexpr const char *kLogFile = "app.log";
 
-void truncateLogFile(const std::string &logfile) {
+/*
+可配置参数（命令行）
+--logs N ：总日志条数（默认 1,000,000）
+--warmup-logs N ：预热条数（默认 0）
+--threads N ：线程数（默认硬件并发）
+--capacity N ：队列容量（默认 8192）
+--policy BLOCK|DROP ：队列满策略（默认 BLOCK）
+--timeout-us N ：BLOCK 超时（默认无限）
+--buffer-pool N ：BufferPool 初始数量（默认 8192）
+--sink file|console ：输出 sink（默认 file）
+--log-file path ：日志文件路径（默认 app.log）
+--level DEBUG|INFO|... ：Logger 级别（默认 INFO）
+--sample-rate N ：每 N 条采 1 个延迟样本（默认 1000，0 表示不采样）
+--count-lines ：额外统计文件行数（可选）
+
+// 示例命令
+./main --threads 4 --logs 10000000 --warmup-logs 1000 --policy BLOCK --capacity
+10240 --sink file --log-file app.log --sample-rate 1000 --buffer-pool 10240
+*/
+
+struct BenchmarkConfig {
+  size_t log_count = 1'000'000;
+  size_t warmup_logs = 0;
+  size_t thread_count = std::max(1u, std::thread::hardware_concurrency());
+  size_t capacity = 8192;
+  QueueFullPolicy policy = QueueFullPolicy::BLOCK;
+  size_t timeout_us = QueConfig::kMaxBlockTimeout_us;
+  size_t buffer_pool = 8192;
+  LogLevel level = LogLevel::INFO;
+  std::string sink = "file";
+  std::string log_file = "app.log";
+  size_t sample_rate = 1000;
+  bool count_lines = false;
+};
+
+struct ThreadStats {
+  uint64_t count = 0;
+  uint64_t sum_ns = 0;
+  uint64_t min_ns = std::numeric_limits<uint64_t>::max();
+  uint64_t max_ns = 0;
+  std::vector<uint64_t> samples;
+};
+
+struct AggregateStats {
+  uint64_t count = 0;
+  uint64_t sum_ns = 0;
+  uint64_t min_ns = std::numeric_limits<uint64_t>::max();
+  uint64_t max_ns = 0;
+  std::vector<uint64_t> samples;
+};
+
+static uint64_t NowNs() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+static QueueFullPolicy ParsePolicy(const std::string &value) {
+  if (value == "DROP") {
+    return QueueFullPolicy::DROP;
+  }
+  return QueueFullPolicy::BLOCK;
+}
+
+static LogLevel ParseLevel(const std::string &value) {
+  if (value == "DEBUG")
+    return LogLevel::DEBUG;
+  if (value == "INFO")
+    return LogLevel::INFO;
+  if (value == "WARN")
+    return LogLevel::WARN;
+  if (value == "ERROR")
+    return LogLevel::ERROR;
+  if (value == "FATAL")
+    return LogLevel::FATAL;
+  return LogLevel::INFO;
+}
+
+static void truncateLogFile(const std::string &logfile) {
   std::fstream ofs(logfile, std::ios::out | std::ios::trunc);
   ofs.close();
 }
 
-void init() {
-  QueConfig cfg(8192, QueueFullPolicy::BLOCK);
-  auto &logger = Logger::Instance();
-  // 初始化系统
-  logger.Init(cfg, 8192);
-  logger.SetLevel(LogLevel::DEBUG);
-
-  // 添加 Sinks
-  // logger.AddSink(std::make_shared<ConsoleSink>());
-  logger.AddSink(std::make_shared<FileSink>(kLogFile));
-}
-
-size_t CountLines(const std::string &filename) {
+static size_t CountLines(const std::string &filename) {
   std::string cmd = "wc -l < " + filename;
   FILE *pipe = popen(cmd.c_str(), "r");
   if (!pipe)
     return 0;
-
   size_t count = 0;
   fscanf(pipe, "%zu", &count);
   pclose(pipe);
-
   return count;
 }
 
-int main() {
-  init();
-  std::cout << "logfile: " << kLogFile << std::endl;
-  truncateLogFile(kLogFile);
-
-  // 计时器
-  stopwatch sw_total(stopwatch::TimeType::s);
-  stopwatch sw_log(stopwatch::TimeType::ns);
-  stopwatch sw_flush(stopwatch::TimeType::s);
-  sw_total.start();
-
-  sw_log.start();
-  // 写入kLogCount条日志
-  for (int i = 0; i < kLogCount; ++i) {
-    INFO("Hello, LogSystem! {}", i);
+static BenchmarkConfig ParseArgs(int argc, char **argv) {
+  BenchmarkConfig cfg;
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    auto next = [&](size_t &out) {
+      if (i + 1 < argc) {
+        out = static_cast<size_t>(std::stoull(argv[++i]));
+      }
+    };
+    if (arg == "--logs") {
+      next(cfg.log_count);
+    } else if (arg == "--warmup-logs") {
+      next(cfg.warmup_logs);
+    } else if (arg == "--threads") {
+      next(cfg.thread_count);
+    } else if (arg == "--capacity") {
+      next(cfg.capacity);
+    } else if (arg == "--timeout-us") {
+      next(cfg.timeout_us);
+    } else if (arg == "--buffer-pool") {
+      next(cfg.buffer_pool);
+    } else if (arg == "--sample-rate") {
+      next(cfg.sample_rate);
+    } else if (arg == "--sink" && i + 1 < argc) {
+      cfg.sink = argv[++i];
+    } else if (arg == "--log-file" && i + 1 < argc) {
+      cfg.log_file = argv[++i];
+    } else if (arg == "--policy" && i + 1 < argc) {
+      cfg.policy = ParsePolicy(argv[++i]);
+    } else if (arg == "--level" && i + 1 < argc) {
+      cfg.level = ParseLevel(argv[++i]);
+    } else if (arg == "--count-lines") {
+      cfg.count_lines = true;
+    }
   }
-  sw_log.stop();
+  if (cfg.thread_count == 0) {
+    cfg.thread_count = 1;
+  }
+  return cfg;
+}
 
-  sw_flush.start();
-  // 将所有日志刷到文件
-  sw_flush.stop();
+static void InitLogger(const BenchmarkConfig &cfg) {
+  QueConfig que_cfg(cfg.capacity, cfg.policy, cfg.timeout_us);
+  auto &logger = Logger::Instance();
+  logger.Init(que_cfg, cfg.buffer_pool);
+  logger.SetLevel(cfg.level);
+  if (cfg.sink == "console") {
+    logger.AddSink(std::make_shared<ConsoleSink>());
+  } else {
+    logger.AddSink(std::make_shared<FileSink>(cfg.log_file));
+  }
+}
+
+static AggregateStats Aggregate(const std::vector<ThreadStats> &stats) {
+  AggregateStats agg;
+  size_t total_samples = 0;
+  for (const auto &s : stats) {
+    agg.count += s.count;
+    agg.sum_ns += s.sum_ns;
+    agg.min_ns = std::min(agg.min_ns, s.min_ns);
+    agg.max_ns = std::max(agg.max_ns, s.max_ns);
+    total_samples += s.samples.size();
+  }
+  agg.samples.reserve(total_samples);
+  for (const auto &s : stats) {
+    agg.samples.insert(agg.samples.end(), s.samples.begin(), s.samples.end());
+  }
+  return agg;
+}
+
+static uint64_t Percentile(std::vector<uint64_t> &values, double p) {
+  if (values.empty()) {
+    return 0;
+  }
+  std::sort(values.begin(), values.end());
+  double idx = (values.size() - 1) * p;
+  size_t i = static_cast<size_t>(idx);
+  return values[i];
+}
+
+int main(int argc, char **argv) {
+  auto cfg = ParseArgs(argc, argv);
+  InitLogger(cfg);
+  if (cfg.sink != "console") {
+    truncateLogFile(cfg.log_file);
+  }
+
+  std::vector<std::thread> threads;
+  threads.reserve(cfg.thread_count);
+  std::vector<ThreadStats> thread_stats(cfg.thread_count);
+  std::atomic<bool> start_flag{false};
+
+  size_t base = cfg.log_count / cfg.thread_count;
+  size_t remain = cfg.log_count % cfg.thread_count;
+  size_t warm_base = cfg.warmup_logs / cfg.thread_count;
+  size_t warm_remain = cfg.warmup_logs % cfg.thread_count;
+
+  for (size_t t = 0; t < cfg.thread_count; ++t) {
+    size_t count = base + (t < remain ? 1 : 0);
+    size_t warm_count = warm_base + (t < warm_remain ? 1 : 0);
+    threads.emplace_back([&, t, count, warm_count]() {
+      for (size_t i = 0; i < warm_count; ++i) {
+        INFO("warmup {}", i);
+      }
+      while (!start_flag.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      auto &stats = thread_stats[t];
+      if (cfg.sample_rate > 0) {
+        stats.samples.reserve(count / cfg.sample_rate + 1);
+      }
+      for (size_t i = 0; i < count; ++i) {
+        uint64_t begin_ns = NowNs();
+        INFO("Hello, LogSystem! {} {}", t, i);
+        uint64_t end_ns = NowNs();
+        uint64_t lat = end_ns - begin_ns;
+        stats.count += 1;
+        stats.sum_ns += lat;
+        stats.min_ns = std::min(stats.min_ns, lat);
+        stats.max_ns = std::max(stats.max_ns, lat);
+        if (cfg.sample_rate > 0 && (i % cfg.sample_rate == 0)) {
+          stats.samples.push_back(lat);
+        }
+      }
+    });
+  }
+
+  uint64_t start_ns = NowNs();
+  start_flag.store(true, std::memory_order_release);
+  for (auto &th : threads) {
+    th.join();
+  }
+  uint64_t submit_end_ns = NowNs();
   Logger::Instance().Sync();
-  sw_total.stop();
+  uint64_t end_ns = NowNs();
 
-  auto line_count = CountLines(kLogFile);
-  if (line_count != kLogCount) {
-    std::cerr << "Error: logfile is incomplete, expected " << kLogCount
-              << " lines, but got " << line_count << " lines." << std::endl;
-    std::cout << "drop count: " << Logger::Instance().GetDropCount()
-              << std::endl;
+  auto agg = Aggregate(thread_stats);
+  uint64_t total_time_ns = end_ns - start_ns;
+  uint64_t submit_time_ns = submit_end_ns - start_ns;
+  uint64_t sync_time_ns = end_ns - submit_end_ns;
+  double avg_ns =
+      agg.count > 0 ? static_cast<double>(agg.sum_ns) / agg.count : 0;
+
+  uint64_t p50 = Percentile(agg.samples, 0.50);
+  uint64_t p95 = Percentile(agg.samples, 0.95);
+  uint64_t p99 = Percentile(agg.samples, 0.99);
+
+  uint64_t drop_count = Logger::Instance().GetDropCount();
+  uint64_t logfile_size_MB = 0;
+  if (cfg.sink != "console") {
+    logfile_size_MB = std::filesystem::file_size(cfg.log_file) / (1024 * 1024);
   }
 
-  // 计算性能指标
-  std::cout << "total time: " << sw_total.duration() << " s" << std::endl;
-  std::cout << "avg per log: " << sw_log.duration() / kLogCount << " ns"
+  std::cout << "threads: " << cfg.thread_count << std::endl;
+  std::cout << "logs: " << cfg.log_count << std::endl;
+  std::cout << "policy: " << QueueFullPolicyToString(cfg.policy) << std::endl;
+  std::cout << "capacity: " << cfg.capacity << std::endl;
+  std::cout << "total time: " << total_time_ns / 1e9 << " s" << std::endl;
+  std::cout << "submit time: " << submit_time_ns / 1e9 << " s" << std::endl;
+  std::cout << "sync time: " << sync_time_ns / 1e9 << " s" << std::endl;
+  std::cout << "avg submit latency: " << avg_ns << " ns" << std::endl;
+  std::cout << "p50/p95/p99: " << p50 << "/" << p95 << "/" << p99 << " ns"
             << std::endl;
-  std::cout << "Flush time: " << sw_flush.duration() << " s" << std::endl;
-  auto logfile_size_MB = std::filesystem::file_size(kLogFile) / (1024 * 1024);
-  std::cout << "logfile size: " << logfile_size_MB << " MB" << std::endl;
-  std::cout << "avg throughput: " << 1.0 * logfile_size_MB / sw_total.duration()
-            << " MB/s" << std::endl;
+  std::cout << "drop count: " << drop_count << std::endl;
+  if (cfg.sink != "console") {
+    std::cout << "logfile: " << cfg.log_file << std::endl;
+    std::cout << "logfile size: " << logfile_size_MB << " MB" << std::endl;
+    double throughput =
+        total_time_ns > 0 ? 1.0 * logfile_size_MB / (total_time_ns / 1e9) : 0.0;
+    std::cout << "avg throughput: " << throughput << " MB/s" << std::endl;
+  }
+
+  if (cfg.count_lines && cfg.sink != "console") {
+    auto line_count = CountLines(cfg.log_file);
+    std::cout << "line count: " << line_count << std::endl;
+  }
 
   return 0;
 }
