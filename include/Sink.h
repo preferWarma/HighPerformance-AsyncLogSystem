@@ -1,6 +1,7 @@
-// Sink.h
 #pragma once
-#include "LogFormatter.h"
+
+#include "tool/LogFormatter.h"
+#include <string_view>
 
 namespace lyf {
 
@@ -19,8 +20,11 @@ protected:
 // --- 文件 Sink 实现 ---
 class FileSink : public ILogSink {
 public:
-  FileSink(const std::string &filepath) {
-    file_ = fopen(filepath.c_str(), "a");
+  FileSink(std::string_view filepath) {
+    file_ = fopen(filepath.data(), "a");
+    // 分配文件缓冲，避免频繁系统调用
+    setvbuf(file_, nullptr, _IOFBF, 4096);
+    // 预分配 Buffer 空间，避免频繁 realloc
     buffer_.reserve(4096);
   }
 

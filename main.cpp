@@ -1,8 +1,10 @@
 #include "Logger.h"
 #include "tool/Timer.h"
+#include <fstream>
 #include <iostream>
 #include <sys/fcntl.h>
 #include <unistd.h>
+
 using namespace lyf;
 constexpr int kLogCount = 1e8;
 constexpr const char *kLogFile = "app.log";
@@ -13,10 +15,10 @@ void truncateLogFile(const std::string &logfile) {
 }
 
 void init() {
-  QueConfig cfg(8192, QueueFullPolicy::DROP);
+  QueConfig cfg(8192, QueueFullPolicy::BLOCK);
   auto &logger = Logger::Instance();
   // 初始化系统
-  logger.Init(cfg);
+  logger.Init(cfg, 8192);
   logger.SetLevel(LogLevel::DEBUG);
 
   // 添加 Sinks
@@ -51,21 +53,21 @@ int main() {
   sw_log.start();
   // 写入kLogCount条日志
   for (int i = 0; i < kLogCount; ++i) {
-    LOG_INFO("Hello, LogSystem! {}", i);
+    INFO("Hello, LogSystem! {}", i);
   }
   sw_log.stop();
 
   sw_flush.start();
   // 将所有日志刷到文件
   sw_flush.stop();
-  Logger::Instance().GetImpl()->Sync();
+  Logger::Instance().Sync();
   sw_total.stop();
 
   auto line_count = CountLines(kLogFile);
   if (line_count != kLogCount) {
     std::cerr << "Error: logfile is incomplete, expected " << kLogCount
               << " lines, but got " << line_count << " lines." << std::endl;
-    std::cout << "drop count: " << Logger::Instance().GetImpl()->GetDropCount()
+    std::cout << "drop count: " << Logger::Instance().GetDropCount()
               << std::endl;
   }
 
