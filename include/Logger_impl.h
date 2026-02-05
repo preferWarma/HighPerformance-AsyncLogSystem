@@ -65,10 +65,11 @@ private:
 
   void WorkerLoop() {
     std::vector<LogMessage> buffer_batch;
-    buffer_batch.reserve(128); // 预分配
+    constexpr size_t kBatchSize = 2048;
+    buffer_batch.reserve(kBatchSize); // 预分配
 
     while (running_ || queue_.size_approx() > 0) {
-      size_t count = queue_.PopBatch(buffer_batch, 128);
+      size_t count = queue_.PopBatch(buffer_batch, kBatchSize);
       if (count > 0) {
         for (const auto &msg : buffer_batch) {
           if (msg.level == LogLevel::FLUSH) {

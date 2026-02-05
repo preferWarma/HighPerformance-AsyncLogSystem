@@ -22,10 +22,11 @@ class FileSink : public ILogSink {
 public:
   FileSink(std::string_view filepath) {
     file_ = fopen(filepath.data(), "a");
+    constexpr size_t kBufferSize = 128 * 1024;
     // 分配文件缓冲，避免频繁系统调用
-    setvbuf(file_, nullptr, _IOFBF, 4096);
+    setvbuf(file_, nullptr, _IOFBF, kBufferSize);
     // 预分配 Buffer 空间，避免频繁 realloc
-    buffer_.reserve(4096);
+    buffer_.reserve(kBufferSize);
   }
 
   ~FileSink() {

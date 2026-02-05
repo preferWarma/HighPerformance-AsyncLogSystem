@@ -18,10 +18,10 @@ using namespace lyf;
 --logs N ：总日志条数（默认 1,000,000）
 --warmup-logs N ：预热条数（默认 0）
 --threads N ：线程数（默认硬件并发）
---capacity N ：队列容量（默认 8192）
+--capacity N ：队列容量（默认 65536）
 --policy BLOCK|DROP ：队列满策略（默认 BLOCK）
 --timeout-us N ：BLOCK 超时（默认无限）
---buffer-pool N ：BufferPool 初始数量（默认 8192）
+--buffer-pool N ：BufferPool 初始数量（默认 65536）
 --sink file|console ：输出 sink（默认 file）
 --log-file path ：日志文件路径（默认 app.log）
 --level DEBUG|INFO|... ：Logger 级别（默认 INFO）
@@ -30,17 +30,17 @@ using namespace lyf;
 
 // 示例命令
 ./main --threads 4 --logs 10000000 --warmup-logs 1000 --policy BLOCK --capacity
-10240 --sink file --log-file app.log --sample-rate 1000 --buffer-pool 10240
+65536 --sink file --buffer-pool 65536 --log-file app.log --sample-rate 1000
 */
 
 struct BenchmarkConfig {
   size_t log_count = 1'000'000;
   size_t warmup_logs = 0;
   size_t thread_count = std::max(1u, std::thread::hardware_concurrency());
-  size_t capacity = 8192;
+  size_t capacity = 65536;
   QueueFullPolicy policy = QueueFullPolicy::BLOCK;
   size_t timeout_us = QueConfig::kMaxBlockTimeout_us;
-  size_t buffer_pool = 8192;
+  size_t buffer_pool_size = 65536;
   LogLevel level = LogLevel::INFO;
   std::string sink = "file";
   std::string log_file = "app.log";
@@ -127,7 +127,7 @@ static BenchmarkConfig ParseArgs(int argc, char **argv) {
     } else if (arg == "--timeout-us") {
       next(cfg.timeout_us);
     } else if (arg == "--buffer-pool") {
-      next(cfg.buffer_pool);
+      next(cfg.buffer_pool_size);
     } else if (arg == "--sample-rate") {
       next(cfg.sample_rate);
     } else if (arg == "--sink" && i + 1 < argc) {
@@ -151,7 +151,7 @@ static BenchmarkConfig ParseArgs(int argc, char **argv) {
 static void InitLogger(const BenchmarkConfig &cfg) {
   QueConfig que_cfg(cfg.capacity, cfg.policy, cfg.timeout_us);
   auto &logger = Logger::Instance();
-  logger.Init(que_cfg, cfg.buffer_pool);
+  logger.Init(que_cfg, cfg.buffer_pool_size);
   logger.SetLevel(cfg.level);
   if (cfg.sink == "console") {
     logger.AddSink(std::make_shared<ConsoleSink>());
@@ -253,6 +253,10 @@ int main(int argc, char **argv) {
   uint64_t p50 = Percentile(agg.samples, 0.50);
   uint64_t p95 = Percentile(agg.samples, 0.95);
   uint64_t p99 = Percentile(agg.samples, 0.99);
+  uint64_t p999 = Percentile(agg.samples, 0.999);
+
+  uint64_t min_lat_ns = agg.min_ns;
+  uint64_t max_lat_ns = agg.max_ns;
 
   uint64_t drop_count = Logger::Instance().GetDropCount();
   uint64_t logfile_size_MB = 0;
@@ -264,12 +268,15 @@ int main(int argc, char **argv) {
   std::cout << "logs: " << cfg.log_count << std::endl;
   std::cout << "policy: " << QueueFullPolicyToString(cfg.policy) << std::endl;
   std::cout << "capacity: " << cfg.capacity << std::endl;
+  std::cout << "buffer pool size: " << cfg.buffer_pool_size << std::endl;
   std::cout << "total time: " << total_time_ns / 1e9 << " s" << std::endl;
   std::cout << "submit time: " << submit_time_ns / 1e9 << " s" << std::endl;
   std::cout << "sync time: " << sync_time_ns / 1e9 << " s" << std::endl;
   std::cout << "avg submit latency: " << avg_ns << " ns" << std::endl;
-  std::cout << "p50/p95/p99: " << p50 << "/" << p95 << "/" << p99 << " ns"
+  std::cout << "min/max latency: " << min_lat_ns << "/" << max_lat_ns << " ns"
             << std::endl;
+  std::cout << "p50/p95/p99/p999: " << p50 << "/" << p95 << "/" << p99 << "/"
+            << p999 << " ns" << std::endl;
   std::cout << "drop count: " << drop_count << std::endl;
   if (cfg.sink != "console") {
     std::cout << "logfile: " << cfg.log_file << std::endl;

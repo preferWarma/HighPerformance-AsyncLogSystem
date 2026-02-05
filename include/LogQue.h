@@ -34,7 +34,7 @@ struct QueConfig {
   QueueFullPolicy full_policy;
   size_t block_timeout_us; // 最大阻塞时间，超过则丢弃
 
-  QueConfig(size_t capacity = 8192,
+  QueConfig(size_t capacity = 65536,
             QueueFullPolicy policy = QueueFullPolicy::BLOCK,
             size_t timeout_us = kMaxBlockTimeout_us)
       : capacity(capacity), full_policy(policy), block_timeout_us(timeout_us) {}
@@ -45,7 +45,7 @@ public:
   using ConcurrentQueueType = moodycamel::ConcurrentQueue<LogMessage>;
 
   LogQueue(const QueConfig &cfg)
-      : cfg_(cfg), que_(cfg.capacity == 0 ? 8192 : cfg.capacity),
+      : cfg_(cfg), que_(cfg.capacity == 0 ? 65536 : cfg.capacity),
         capacity_(cfg.capacity) {}
 
   bool Push(LogMessage &&msg, bool force = false) {
@@ -69,8 +69,8 @@ private:
       return false;
     }
 
-    // BLOCK 策略：循环等待直到 size_approx 降下来
-    size_t sleep_us = 1;
+    // BLOCK 策略优化：混合自旋 + 线程休眠
+    int spin_count = 0;
     auto start = std::chrono::steady_clock::now();
 
     while (true) {
@@ -85,9 +85,11 @@ private:
         return false; // 超时丢弃
       }
 
-      std::this_thread::sleep_for(std::chrono::microseconds(sleep_us));
-      if (sleep_us < 1024) {
-        sleep_us *= 2;
+      if (spin_count < 100) {
+        std::this_thread::yield();
+        spin_count++;
+      } else {
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
       }
     }
   }

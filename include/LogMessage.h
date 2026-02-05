@@ -54,7 +54,7 @@ class BufferPool : public Singleton<BufferPool> {
   friend class Singleton<BufferPool>;
 
 public:
-  void Init(size_t count = 40960) {
+  void Init(size_t count = 65536) {
     std::vector<LogBuffer *> batch;
     batch.reserve(count);
     for (size_t i = 0; i < count; ++i) {
