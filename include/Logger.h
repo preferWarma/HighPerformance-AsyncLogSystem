@@ -3,6 +3,7 @@
 #include "LogConfig.h"
 #include "Logger_impl.h"
 #include "tool/Singleton.h"
+#include <algorithm>
 #include <cstddef>
 #include <format>
 #include <memory>
@@ -34,7 +35,7 @@ public:
   void Init(const LogConfig &cfg) {
     owned_config_ = cfg;
     buffer_pool_ =
-        std::make_unique<BufferPool>(owned_config_.GetBufferPoolSize());
+        std::make_shared<BufferPool>(owned_config_.GetBufferPoolSize());
     impl_ = std::make_unique<AsyncLogger>(owned_config_);
     SetLevel(owned_config_.GetLevel());
   }
@@ -44,7 +45,7 @@ public:
     owned_config_.LoadFromFile(config_path);
     owned_config_.StartHotReload(config_path);
     buffer_pool_ =
-        std::make_unique<BufferPool>(owned_config_.GetBufferPoolSize());
+        std::make_shared<BufferPool>(owned_config_.GetBufferPoolSize());
     impl_ = std::make_unique<AsyncLogger>(owned_config_);
     SetLevel(owned_config_.GetLevel());
     auto file_path = owned_config_.GetLogPath();
@@ -84,13 +85,14 @@ public:
 
   AsyncLogger *GetImpl() { return impl_.get(); }
   BufferPool *GetBufferPool() { return buffer_pool_.get(); }
+  std::shared_ptr<BufferPool> GetBufferPoolShared() { return buffer_pool_; }
   size_t GetDropCount() const { return impl_->GetDropCount(); }
   LogLevel GetLevel() const { return owned_config_.GetLevel(); }
   void SetLevel(LogLevel lv) { owned_config_.SetLevel(lv); }
   const LogConfig &GetConfig() const { return owned_config_; }
 
 private:
-  std::unique_ptr<BufferPool> buffer_pool_;
+  std::shared_ptr<BufferPool> buffer_pool_;
   std::unique_ptr<AsyncLogger> impl_;
   LogConfig owned_config_;
 };
@@ -99,12 +101,12 @@ private:
 class ThreadLocalBufferCache {
 private:
   std::vector<LogBuffer *> cache;
-  BufferPool *pool_;
+  std::shared_ptr<BufferPool> pool_;
   size_t batch_size_;
 
 public:
-  ThreadLocalBufferCache(BufferPool *pool, size_t batch_size)
-      : pool_(pool), batch_size_(batch_size) {}
+  ThreadLocalBufferCache(std::shared_ptr<BufferPool> pool, size_t batch_size)
+      : pool_(std::move(pool)), batch_size_(batch_size) {}
 
   ~ThreadLocalBufferCache() {
     // 线程退出，归还所有缓存
@@ -142,8 +144,8 @@ template <typename... Args>
 void LogSubmit(LogLevel level, const char *file, int line,
                std::format_string<Args...> fmt, Args &&...args) {
   auto *logger = Logger::Instance().GetImpl();
-  auto *buffer_pool = Logger::Instance().GetBufferPool();
-  if (logger == nullptr || buffer_pool == nullptr) {
+  auto buffer_pool = Logger::Instance().GetBufferPoolShared();
+  if (logger == nullptr || !buffer_pool) {
     return;
   }
 
@@ -151,14 +153,21 @@ void LogSubmit(LogLevel level, const char *file, int line,
   if (tls_count == 0) {
     tls_count = LogConfig::kDefaultTLSBufferCount;
   }
-  static thread_local ThreadLocalBufferCache tls_buf_cache(buffer_pool,
-                                                           tls_count);
-  auto *buf = tls_buf_cache.Get();
+  static thread_local std::shared_ptr<BufferPool> tls_pool;
+  static thread_local std::unique_ptr<ThreadLocalBufferCache> tls_buf_cache;
+
+  if (tls_pool.get() != buffer_pool.get()) {
+    tls_pool = buffer_pool;
+    tls_buf_cache =
+        std::make_unique<ThreadLocalBufferCache>(buffer_pool, tls_count);
+  }
+
+  auto *buf = tls_buf_cache->Get();
 
   // payload 写到缓冲区
   auto result = std::format_to_n(buf->data, LogBuffer::SIZE - 1, fmt,
                                  std::forward<Args>(args)...);
-  buf->length = result.size;
+  buf->length = std::min(static_cast<size_t>(result.size), LogBuffer::SIZE - 1);
   buf->data[buf->length] = '\0';
 
   // 减少每次提交时的查询线程ID成本
@@ -166,7 +175,8 @@ void LogSubmit(LogLevel level, const char *file, int line,
       LogMessage::hash_func(std::this_thread::get_id());
 
   auto now = logger->GetCoarseTime();
-  LogMessage msg(level, file, line, hash_tid_cache, now, buf, buffer_pool);
+  LogMessage msg(level, file, line, hash_tid_cache, now, buf,
+                 buffer_pool.get());
 
   if (!logger->Commit(std::move(msg))) {
     logger->AddDropCount(1);
