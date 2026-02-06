@@ -1,6 +1,6 @@
 #include "LogConfig.h"
 #include "LogMessage.h"
-#include "tool/LogFormatter.h"
+#include "LogFormatter.h"
 #include <algorithm>
 #include <chrono>
 #include <gtest/gtest.h>

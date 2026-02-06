@@ -1,7 +1,7 @@
 #pragma once
 
 #include "LogConfig.h"
-#include "tool/LogFormatter.h"
+#include "LogFormatter.h"
 #include <string_view>
 
 namespace lyf {
