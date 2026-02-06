@@ -1,16 +1,16 @@
 #pragma once
+#include "LogConfig.h"
 #include "LogQue.h"
 #include "Sink.h"
-
-using namespace std::chrono_literals;
 
 namespace lyf {
 class AsyncLogger {
   using system_clock = std::chrono::system_clock;
 
 public:
-  AsyncLogger(const QueConfig &config) : queue_(config), running_(true) {
-    UpdateNow(); // 初始化粗时间戳
+  AsyncLogger(const LogConfig &config)
+      : config_(config), queue_(config.GetQueueConfig()), running_(true) {
+    UpdateNow();
     worker_thread_ = std::thread(&AsyncLogger::WorkerLoop, this);
     timer_thread_ = std::thread(&AsyncLogger::TimerLoop, this);
   }
@@ -59,17 +59,21 @@ private:
   void TimerLoop() {
     while (running_) {
       UpdateNow();
-      std::this_thread::sleep_for(1ms);
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(LogConfig::kCoarseTimeIntervalMs));
     }
   }
 
   void WorkerLoop() {
     std::vector<LogMessage> buffer_batch;
-    constexpr size_t kBatchSize = 2048;
-    buffer_batch.reserve(kBatchSize); // 预分配
+    size_t batch_size = config_.GetWorkerBatchSize();
+    if (batch_size == 0) {
+      batch_size = LogConfig::kDefaultWorkerBatchSize;
+    }
+    buffer_batch.reserve(batch_size);
 
     while (running_ || queue_.size_approx() > 0) {
-      size_t count = queue_.PopBatch(buffer_batch, kBatchSize);
+      size_t count = queue_.PopBatch(buffer_batch, batch_size);
       if (count > 0) {
         for (const auto &msg : buffer_batch) {
           if (msg.level == LogLevel::FLUSH) {
@@ -91,7 +95,8 @@ private:
         buffer_batch.clear();
       } else {
         if (running_) {
-          std::this_thread::sleep_for(100us);
+          std::this_thread::sleep_for(
+              std::chrono::microseconds(LogConfig::kDefaultWorkerIdleSleepUs));
         } else {
           break; // running=false 且队列空，彻底退出
         }
@@ -100,6 +105,7 @@ private:
   }
 
 private:
+  const LogConfig &config_;
   LogQueue queue_;
   std::atomic<bool> running_;
   std::thread worker_thread_;

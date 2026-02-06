@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LogConfig.h"
 #include "third/concurrentqueue.h" // ConcurrentQueue
 #include <chrono>
 #include <cstddef>
@@ -9,40 +10,15 @@
 #include <vector>
 
 namespace lyf {
-enum class LogLevel {
-  DEBUG = 0,
-  INFO = 1,
-  WARN = 2,
-  ERROR = 3,
-  FATAL = 4,
-  FLUSH = 99, // 特殊级别，用于触发刷新
-};
-
-inline constexpr std::string_view LevelToString(LogLevel level) {
-  switch (level) {
-  case LogLevel::DEBUG:
-    return "DEBUG";
-  case LogLevel::INFO:
-    return "INFO";
-  case LogLevel::WARN:
-    return "WARN";
-  case LogLevel::ERROR:
-    return "ERROR";
-  case LogLevel::FATAL:
-    return "FATAL";
-  default:
-    return "UNKNOWN";
-  }
-}
 
 // 定长 Buffer，承载实际数据
 struct LogBuffer {
-  static constexpr size_t SIZE = 4096; // 4KB per log
+  static constexpr size_t SIZE = LogConfig::kPerLogMaxSize;
+
   char data[SIZE];
   size_t length = 0;
 
   void reset() { length = 0; }
-
   // 提供给 std::format_to 的迭代器接口
   char *begin() { return data; }
   char *end() { return data + SIZE; }
@@ -51,7 +27,7 @@ struct LogBuffer {
 // 内存池
 class BufferPool {
 public:
-  BufferPool(size_t count = 65536) {
+  BufferPool(size_t count = LogConfig::kDefaultBufferPoolSize) {
     std::vector<LogBuffer *> batch;
     batch.reserve(count);
     for (size_t i = 0; i < count; ++i) {

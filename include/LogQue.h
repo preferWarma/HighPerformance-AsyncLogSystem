@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LogConfig.h"
 #include "LogMessage.h"
 #include "third/concurrentqueue.h" // ConcurrentQueue
 
@@ -9,43 +10,13 @@
 
 namespace lyf {
 
-enum class QueueFullPolicy {
-  BLOCK = 0, // 队列满时阻塞
-  DROP = 1   // 队列满时丢弃
-};
-
-inline constexpr std::string_view
-QueueFullPolicyToString(QueueFullPolicy policy) {
-  switch (policy) {
-  case QueueFullPolicy::BLOCK:
-    return "BLOCK";
-  case QueueFullPolicy::DROP:
-    return "DROP";
-  default:
-    return "UNKNOWN";
-  }
-}
-
-struct QueConfig {
-  constexpr static size_t kMaxBlockTimeout_us =
-      std::chrono::microseconds::max().count();
-
-  size_t capacity;
-  QueueFullPolicy full_policy;
-  size_t block_timeout_us; // 最大阻塞时间，超过则丢弃
-
-  QueConfig(size_t capacity = 65536,
-            QueueFullPolicy policy = QueueFullPolicy::BLOCK,
-            size_t timeout_us = kMaxBlockTimeout_us)
-      : capacity(capacity), full_policy(policy), block_timeout_us(timeout_us) {}
-};
-
 class LogQueue {
 public:
   using ConcurrentQueueType = moodycamel::ConcurrentQueue<LogMessage>;
 
   LogQueue(const QueConfig &cfg)
-      : cfg_(cfg), que_(cfg.capacity == 0 ? 65536 : cfg.capacity),
+      : cfg_(cfg), que_(cfg.capacity == 0 ? LogConfig::kDefaultQueueCapacity
+                                          : cfg.capacity),
         capacity_(cfg.capacity) {}
 
   bool Push(LogMessage &&msg, bool force = false) {
@@ -56,7 +27,8 @@ public:
     return que_.enqueue(std::move(msg));
   }
 
-  size_t PopBatch(std::vector<LogMessage> &output, size_t batch_size = 1024) {
+  size_t PopBatch(std::vector<LogMessage> &output,
+                  size_t batch_size = LogConfig::kDefaultWorkerBatchSize) {
     return que_.try_dequeue_bulk(std::back_inserter(output), batch_size);
   }
 
@@ -85,11 +57,12 @@ private:
         return false; // 超时丢弃
       }
 
-      if (spin_count < 100) {
+      if (spin_count < LogConfig::kDefaultBackpressureSpinCount) {
         std::this_thread::yield();
         spin_count++;
       } else {
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(
+            std::chrono::microseconds(LogConfig::kDefaultBackpressureSleepUs));
       }
     }
   }

@@ -108,27 +108,6 @@ static uint64_t NowNs() {
       .count();
 }
 
-static QueueFullPolicy ParsePolicy(const std::string &value) {
-  if (value == "DROP") {
-    return QueueFullPolicy::DROP;
-  }
-  return QueueFullPolicy::BLOCK;
-}
-
-static LogLevel ParseLevel(const std::string &value) {
-  if (value == "DEBUG")
-    return LogLevel::DEBUG;
-  if (value == "INFO")
-    return LogLevel::INFO;
-  if (value == "WARN")
-    return LogLevel::WARN;
-  if (value == "ERROR")
-    return LogLevel::ERROR;
-  if (value == "FATAL")
-    return LogLevel::FATAL;
-  return LogLevel::INFO;
-}
-
 static void truncateLogFile(const std::string &logfile) {
   std::fstream ofs(logfile, std::ios::out | std::ios::trunc);
   ofs.close();
@@ -187,10 +166,15 @@ static BenchmarkConfig ParseArgs(int argc, char **argv) {
 }
 
 static void InitLogger(const BenchmarkConfig &cfg) {
-  QueConfig que_cfg(cfg.capacity, cfg.policy, cfg.timeout_us);
   auto &logger = Logger::Instance();
-  logger.Init(que_cfg, cfg.buffer_pool_size);
-  logger.SetLevel(cfg.level);
+  LogConfig log_cfg;
+  log_cfg.SetQueueCapacity(cfg.capacity)
+      .SetQueueFullPolicy(cfg.policy)
+      .SetQueueBlockTimeoutUs(cfg.timeout_us)
+      .SetBufferPoolSize(cfg.buffer_pool_size)
+      .SetLevel(cfg.level)
+      .SetLogPath(""); // 设置为空避免初始化时创建文件sink
+  logger.Init(log_cfg);
   if (cfg.sink == "console") {
     logger.AddSink(std::make_shared<ConsoleSink>());
   } else {

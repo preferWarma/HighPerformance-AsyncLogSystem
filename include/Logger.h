@@ -1,8 +1,8 @@
 #pragma once
 
+#include "LogConfig.h"
 #include "Logger_impl.h"
 #include "tool/Singleton.h"
-#include <atomic>
 #include <cstddef>
 #include <format>
 #include <memory>
@@ -29,13 +29,34 @@ class Logger : public Singleton<Logger> {
   friend class Singleton<Logger>;
 
 public:
-  void Init(const QueConfig &cfg, size_t buf_pool_cnt = 40960) {
-    buffer_pool_ = std::make_unique<BufferPool>(buf_pool_cnt);
-    impl_ = std::make_unique<AsyncLogger>(cfg);
+  ~Logger() override { Shutdown(); }
+
+  void Init(const LogConfig &cfg) {
+    owned_config_ = cfg;
+    buffer_pool_ =
+        std::make_unique<BufferPool>(owned_config_.GetBufferPoolSize());
+    impl_ = std::make_unique<AsyncLogger>(owned_config_);
+    SetLevel(owned_config_.GetLevel());
+  }
+
+  void
+  InitFromConfig(std::string_view config_path = LogConfig::kDefaultConfigPath) {
+    owned_config_.LoadFromFile(config_path);
+    owned_config_.StartHotReload(config_path);
+    buffer_pool_ =
+        std::make_unique<BufferPool>(owned_config_.GetBufferPoolSize());
+    impl_ = std::make_unique<AsyncLogger>(owned_config_);
+    SetLevel(owned_config_.GetLevel());
+    auto file_path = owned_config_.GetLogPath();
+    if (!file_path.empty()) {
+      CreateLogDirectory(std::string(file_path));
+      AddSink(std::make_shared<FileSink>(file_path, owned_config_));
+    }
   }
 
   void AddSink(std::shared_ptr<ILogSink> sink) {
     if (impl_) {
+      sink->ApplyConfig(owned_config_);
       impl_->AddSink(sink);
     }
   }
@@ -52,16 +73,26 @@ public:
     }
   }
 
+  void Shutdown() {
+    if (impl_) {
+      impl_->Sync();
+    }
+    impl_.reset();
+    buffer_pool_.reset();
+    owned_config_.StopHotReload();
+  }
+
   AsyncLogger *GetImpl() { return impl_.get(); }
   BufferPool *GetBufferPool() { return buffer_pool_.get(); }
   size_t GetDropCount() const { return impl_->GetDropCount(); }
-  LogLevel GetLevel() const { return level_; }
-  void SetLevel(LogLevel lv) { level_ = lv; }
+  LogLevel GetLevel() const { return owned_config_.GetLevel(); }
+  void SetLevel(LogLevel lv) { owned_config_.SetLevel(lv); }
+  const LogConfig &GetConfig() const { return owned_config_; }
 
 private:
   std::unique_ptr<BufferPool> buffer_pool_;
   std::unique_ptr<AsyncLogger> impl_;
-  std::atomic<LogLevel> level_{LogLevel::INFO};
+  LogConfig owned_config_;
 };
 
 // 线程局部缓存管理器
@@ -69,10 +100,11 @@ class ThreadLocalBufferCache {
 private:
   std::vector<LogBuffer *> cache;
   BufferPool *pool_;
-  static constexpr size_t kBatchSize = 64;
+  size_t batch_size_;
 
 public:
-  ThreadLocalBufferCache(BufferPool *pool) : pool_(pool) {}
+  ThreadLocalBufferCache(BufferPool *pool, size_t batch_size)
+      : pool_(pool), batch_size_(batch_size) {}
 
   ~ThreadLocalBufferCache() {
     // 线程退出，归还所有缓存
@@ -91,8 +123,8 @@ public:
     }
 
     // 缓存空，去全局池批发
-    cache.reserve(kBatchSize);
-    size_t count = pool_->AllocBatch(cache, kBatchSize);
+    cache.reserve(batch_size_);
+    size_t count = pool_->AllocBatch(cache, batch_size_);
 
     if (count > 0) {
       LogBuffer *buf = cache.back();
@@ -115,8 +147,12 @@ void LogSubmit(LogLevel level, const char *file, int line,
     return;
   }
 
-  // 线程局部缓存, 避免每次都去全局池拿
-  static thread_local ThreadLocalBufferCache tls_buf_cache(buffer_pool);
+  auto tls_count = Logger::Instance().GetConfig().GetTLSBufferCount();
+  if (tls_count == 0) {
+    tls_count = LogConfig::kDefaultTLSBufferCount;
+  }
+  static thread_local ThreadLocalBufferCache tls_buf_cache(buffer_pool,
+                                                           tls_count);
   auto *buf = tls_buf_cache.Get();
 
   // payload 写到缓冲区

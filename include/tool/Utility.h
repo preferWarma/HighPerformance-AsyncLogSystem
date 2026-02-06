@@ -9,15 +9,10 @@
 #include <vector>
 
 #ifdef LYF_INNER_LOG
-#include "FastFormater.h"
+#include <format>
 #include <iostream>
-#if __cplusplus >= 202002L
 #define lyf_inner_log(fmt, ...)                                                \
-  std::cout << FormatMessage<fmt>(__VA_ARGS__) << std::endl;
-#else
-#define lyf_inner_log(fmt, ...)                                                \
-  std::cout << FormatMessage(fmt, ##__VA_ARGS__) << std::endl;
-#endif
+  std::cout << std::format(fmt, ##__VA_ARGS__) << std::endl;
 #else
 #define lyf_inner_log(fmt, ...) ((void)0)
 #endif
@@ -60,19 +55,13 @@ public:
   }
 };
 
-/// @brief 获取当前时间戳
-/// @return 当前时间戳
-/// @note 单位为毫秒
-inline int64_t GetCurrentTimeStamp() {
+inline int64_t CurrentTsms() {
   return duration_cast<chrono::milliseconds>(
              system_clock::now().time_since_epoch())
       .count();
 }
 
-/// @brief 获取当前时间的格式化字符串
-/// @param format 时间格式字符串, 默认为"%Y-%m-%d %H:%M:%S"
-/// @return 格式化后的时间字符串
-inline string GetCurrentTime(const string &format = "%Y-%m-%d %H:%M:%S") {
+inline string CurrentTimeToString(const string &format = "%Y-%m-%d %H:%M:%S") {
   auto now = system_clock::now();
   auto time_t = system_clock::to_time_t(now);
   std::stringstream ss;
@@ -81,7 +70,6 @@ inline string GetCurrentTime(const string &format = "%Y-%m-%d %H:%M:%S") {
   return ss.str();
 }
 
-/// @brief RAII 确保标志被重置
 class FlagGuard {
 public:
   FlagGuard(std::atomic<bool> &flag) : _flag(flag) {}
@@ -91,9 +79,6 @@ private:
   std::atomic<bool> &_flag;
 };
 
-/// @brief 创建日志目录
-/// @param path 日志文件路径
-/// @return 创建成功返回true, 否则返回false
 inline bool CreateLogDirectory(const string &path) {
   try {
     auto dir = std::filesystem::path(path).parent_path();
@@ -107,9 +92,6 @@ inline bool CreateLogDirectory(const string &path) {
   }
 }
 
-/// @brief 获取文件上一次修改时间
-/// @param filePath 文件路径
-/// @return 文件上一次修改时间
 inline std::filesystem::file_time_type
 GetFileLastWriteTime(std::string_view filePath) {
   try {
