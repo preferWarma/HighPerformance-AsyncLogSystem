@@ -3,6 +3,11 @@
 #include "LogQue.h"
 #include "Sink.h"
 
+#ifdef __linux__
+#include <pthread.h>
+#include <sched.h>
+#endif
+
 namespace lyf {
 class AsyncLogger {
   using system_clock = std::chrono::system_clock;
@@ -65,6 +70,15 @@ private:
   }
 
   void WorkerLoop() {
+#ifdef __linux__
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(core_id, &cpuset);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset);
+#elif defined(__APPLE__)
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
+#endif
+
     std::vector<LogMessage> buffer_batch;
     size_t batch_size = config_.GetWorkerBatchSize();
     if (batch_size == 0) {

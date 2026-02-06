@@ -31,6 +31,20 @@ target_include_directories(main PRIVATE ${PROJECT_SOURCE_DIR}/include) # 添加�
 
 # target_include_directories(http_sink_example PRIVATE ${PROJECT_SOURCE_DIR}/include) # 添加头文件
 
+option(BUILD_BENCHMARKS "Build benchmarks" ON)
+
+if(BUILD_BENCHMARKS)
+  include(FetchContent)
+  FetchContent_Declare(
+    benchmark
+    URL https://github.com/google/benchmark/archive/refs/tags/v1.8.3.zip
+  )
+  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(benchmark)
+
+  add_subdirectory(benchmark)
+endif()
+
 include(CTest)
 
 if(BUILD_TESTING)
