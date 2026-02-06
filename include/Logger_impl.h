@@ -33,11 +33,13 @@ public:
 
   void AddSink(std::shared_ptr<ILogSink> sink) { sinks_.push_back(sink); }
   bool Commit(LogMessage &&msg) { return queue_.Push(std::move(msg)); }
+
   void Flush() {
     for (auto &sink : sinks_) {
       sink->Flush();
     }
   }
+
   void Sync() {
     std::promise<void> prom;
     std::future<void> fut = prom.get_future();
@@ -45,6 +47,10 @@ public:
     if (queue_.Push(LogMessage(&prom), true)) {
       // 等待 Worker 处理到这条消息
       fut.wait();
+    }
+    // 强制落盘
+    for (auto &sink : sinks_) {
+      sink->Sync();
     }
   }
 

@@ -15,6 +15,7 @@ public:
     formatter_.Format(msg, buffer_);
   }
   void Flush() override {}
+  void Sync() override {}
 };
 
 std::once_flag g_init_flag;
@@ -67,8 +68,8 @@ void RecordStats(benchmark::State &state, std::vector<uint64_t> &samples,
   state.counters["p50_ns"] = static_cast<double>(p50);
   state.counters["p90_ns"] = static_cast<double>(p90);
   state.counters["p99_ns"] = static_cast<double>(p99);
-  state.counters["logs_per_sec"] = logs_per_sec;
-  state.counters["mb_per_sec"] = mb_per_sec;
+  state.counters["submit_qps"] = logs_per_sec;
+  state.counters["submit_mbps"] = mb_per_sec;
 }
 
 void LogByLevel(lyf::LogLevel level, const std::string &payload) {

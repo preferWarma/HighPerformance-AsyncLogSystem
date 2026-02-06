@@ -16,6 +16,7 @@ public:
   }
 
   void Flush() override {}
+  void Sync() override {}
 
   void Clear() {
     std::lock_guard<std::mutex> lock(mutex_);

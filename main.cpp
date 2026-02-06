@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <gflags/gflags.h>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -51,21 +52,19 @@ void PrintMemoryUsage(const std::string &label) {
 
 using namespace lyf;
 
-/*
-可配置参数（命令行）
---logs N ：总日志条数（默认 1,000,000）
---warmup-logs N ：预热条数（默认 0）
---threads N ：线程数（默认硬件并发）
---capacity N ：队列容量（默认 65536）
---policy BLOCK|DROP ：队列满策略（默认 BLOCK）
---timeout-us N ：BLOCK 超时（默认无限）
---buffer-pool N ：BufferPool 初始数量（默认 65536）
---sink file|console ：输出 sink（默认 file）
---log-file path ：日志文件路径（默认 app.log）
---level DEBUG|INFO|... ：Logger 级别（默认 INFO）
---sample-rate N ：每 N 条采 1 个延迟样本（默认 1000，0 表示不采样）
---count-lines ：额外统计文件行数（可选）
+DEFINE_uint64(logs, 1'000'000, "总日志条数");
+DEFINE_uint64(warmup_logs, 0, "预热条数");
+DEFINE_uint64(threads, 4, "线程数(0表示硬件并发)");
+DEFINE_uint64(capacity, 65536, "队列容量");
+DEFINE_string(policy, "BLOCK", "队列满策略(默认 BLOCK)");
+DEFINE_uint64(timeout_us, QueConfig::kMaxBlockTimeout_us, "BLOCK 超时");
+DEFINE_uint64(buffer_pool, 65536, "BufferPool 初始数量");
+DEFINE_string(sink, "file", "输出 sink");
+DEFINE_string(log_file, "app.log", "日志文件路径");
+DEFINE_string(level, "INFO", "Logger 级别");
+DEFINE_uint64(sample_rate, 1000, "每 N 条采 1 个延迟样本(表示不采样)");
 
+/*
 // 示例命令
 ./main --threads 4 --logs 10000000 --warmup-logs 1000 --policy BLOCK --capacity
 65536 --sink file --buffer-pool 65536 --log-file app.log --sample-rate 1000
@@ -83,7 +82,6 @@ struct BenchmarkConfig {
   std::string sink = "file";
   std::string log_file = "app.log";
   size_t sample_rate = 1000;
-  bool count_lines = false;
 };
 
 struct ThreadStats {
@@ -93,14 +91,7 @@ struct ThreadStats {
   uint64_t max_ns = 0;
   std::vector<uint64_t> samples;
 };
-
-struct AggregateStats {
-  uint64_t count = 0;
-  uint64_t sum_ns = 0;
-  uint64_t min_ns = std::numeric_limits<uint64_t>::max();
-  uint64_t max_ns = 0;
-  std::vector<uint64_t> samples;
-};
+using AggregateStats = ThreadStats;
 
 static uint64_t NowNs() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -118,49 +109,26 @@ static size_t CountLines(const std::string &filename) {
   if (!file.is_open()) {
     return 0;
   }
-
   // 统计换行符数量
   return std::count(std::istreambuf_iterator<char>(file),
                     std::istreambuf_iterator<char>(), '\n');
 }
 
-static BenchmarkConfig ParseArgs(int argc, char **argv) {
+static BenchmarkConfig BuildConfigFromFlags() {
   BenchmarkConfig cfg;
-  for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    auto next = [&](size_t &out) {
-      if (i + 1 < argc) {
-        out = static_cast<size_t>(std::stoull(argv[++i]));
-      }
-    };
-    if (arg == "--logs") {
-      next(cfg.log_count);
-    } else if (arg == "--warmup-logs") {
-      next(cfg.warmup_logs);
-    } else if (arg == "--threads") {
-      next(cfg.thread_count);
-    } else if (arg == "--capacity") {
-      next(cfg.capacity);
-    } else if (arg == "--timeout-us") {
-      next(cfg.timeout_us);
-    } else if (arg == "--buffer-pool") {
-      next(cfg.buffer_pool_size);
-    } else if (arg == "--sample-rate") {
-      next(cfg.sample_rate);
-    } else if (arg == "--sink" && i + 1 < argc) {
-      cfg.sink = argv[++i];
-    } else if (arg == "--log-file" && i + 1 < argc) {
-      cfg.log_file = argv[++i];
-    } else if (arg == "--policy" && i + 1 < argc) {
-      cfg.policy = ParsePolicy(argv[++i]);
-    } else if (arg == "--level" && i + 1 < argc) {
-      cfg.level = ParseLevel(argv[++i]);
-    } else if (arg == "--count-lines") {
-      cfg.count_lines = true;
-    }
-  }
+  cfg.log_count = static_cast<size_t>(FLAGS_logs);
+  cfg.warmup_logs = static_cast<size_t>(FLAGS_warmup_logs);
+  cfg.thread_count = static_cast<size_t>(FLAGS_threads);
+  cfg.capacity = static_cast<size_t>(FLAGS_capacity);
+  cfg.policy = ParsePolicy(FLAGS_policy);
+  cfg.timeout_us = static_cast<size_t>(FLAGS_timeout_us);
+  cfg.buffer_pool_size = static_cast<size_t>(FLAGS_buffer_pool);
+  cfg.level = ParseLevel(FLAGS_level);
+  cfg.sink = FLAGS_sink;
+  cfg.log_file = FLAGS_log_file;
+  cfg.sample_rate = static_cast<size_t>(FLAGS_sample_rate);
   if (cfg.thread_count == 0) {
-    cfg.thread_count = 1;
+    cfg.thread_count = std::max(1u, std::thread::hardware_concurrency());
   }
   return cfg;
 }
@@ -210,7 +178,8 @@ static uint64_t Percentile(std::vector<uint64_t> &values, double p) {
 }
 
 int main(int argc, char **argv) {
-  auto cfg = ParseArgs(argc, argv);
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  auto cfg = BuildConfigFromFlags();
   InitLogger(cfg);
   if (cfg.sink != "console") {
     truncateLogFile(cfg.log_file);
@@ -291,6 +260,9 @@ int main(int argc, char **argv) {
     logfile_size_MB = std::filesystem::file_size(cfg.log_file) / (1024 * 1024);
   }
 
+  // 停止 Logger
+  Logger::Instance().Shutdown();
+
   std::cout << "threads: " << cfg.thread_count << std::endl;
   std::cout << "logs: " << cfg.log_count << std::endl;
   std::cout << "policy: " << QueueFullPolicyToString(cfg.policy) << std::endl;
@@ -304,7 +276,6 @@ int main(int argc, char **argv) {
             << std::endl;
   std::cout << "p50/p95/p99/p999: " << p50 << "/" << p95 << "/" << p99 << "/"
             << p999 << " ns" << std::endl;
-  std::cout << "drop count: " << drop_count << std::endl;
   if (cfg.sink != "console") {
     std::cout << "logfile: " << cfg.log_file << std::endl;
     std::cout << "logfile size: " << logfile_size_MB << " MB" << std::endl;
@@ -313,7 +284,8 @@ int main(int argc, char **argv) {
     std::cout << "avg throughput: " << throughput << " MB/s" << std::endl;
   }
 
-  if (cfg.count_lines && cfg.sink != "console") {
+  std::cout << "drop count: " << drop_count << std::endl;
+  if (cfg.sink != "console") {
     auto line_count = CountLines(cfg.log_file);
     std::cout << "line count: " << line_count << std::endl;
   }

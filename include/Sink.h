@@ -3,6 +3,7 @@
 #include "LogConfig.h"
 #include "LogFormatter.h"
 #include <string_view>
+#include <unistd.h>
 
 namespace lyf {
 
@@ -11,6 +12,7 @@ public:
   virtual ~ILogSink() = default;
   virtual void Log(const LogMessage &msg) = 0;
   virtual void Flush() = 0;
+  virtual void Sync() = 0;
 
   virtual void ApplyConfig(const LogConfig &config) {
     formatter_.SetConfig(&config);
@@ -61,6 +63,12 @@ public:
     }
   }
 
+  void Sync() override {
+    if (file_) {
+      fsync(fileno(file_));
+    }
+  }
+
   void ApplyConfig(const LogConfig &config) override {
     formatter_.SetConfig(&config);
     if (file_) {
@@ -87,6 +95,7 @@ public:
   }
 
   void Flush() override { fflush(stdout); }
+  void Sync() override { fsync(fileno(stdout)); }
 
   void ApplyConfig(const LogConfig &config) override {
     formatter_.SetConfig(&config);
