@@ -3,6 +3,7 @@ add_executable(unit_tests
   test_logger_level.cpp
   test_log_formatter.cpp
   test_log_queue.cpp
+  test_file_sink_rotate.cpp
 )
 
 target_include_directories(unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/include)

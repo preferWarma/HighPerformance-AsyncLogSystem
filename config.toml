@@ -13,6 +13,9 @@ tls_buffer_count = 64       # 每个线程本地日志缓冲区数量
 [sink.file]
 log_path = "logfile.log"  # 文件日志 sink 输出文件路径
 file_buffer_size_kb = 128 # 每个文件日志 sink 线程本地日志缓冲区大小
+rotate_policy = "NONE"    # 轮转策略: NONE(不轮转), DAILY(按日轮转), SIZE(按大小轮转)
+rotate_size_mb = 1024     # 按大小轮转时的文件大小阈值(MB)
+max_rotate_files = 7      # 最大保留轮转文件数
 
 [sink.console]
 console_buffer_size_kb = 16 # 每个控制台日志 sink 线程本地日志缓冲区大小

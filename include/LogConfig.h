@@ -78,6 +78,34 @@ inline QueueFullPolicy ParsePolicy(std::string_view value) {
   return QueueFullPolicy::BLOCK;
 }
 
+// 文件轮转策略枚举
+enum class RotatePolicy {
+  NONE = 0,  // 不轮转
+  DAILY = 1, // 按日轮转
+  SIZE = 2,  // 按大小轮转
+};
+
+inline constexpr std::string_view RotatePolicyToString(RotatePolicy policy) {
+  switch (policy) {
+  case RotatePolicy::DAILY:
+    return "DAILY";
+  case RotatePolicy::SIZE:
+    return "SIZE";
+  default:
+    return "NONE";
+  }
+}
+
+inline RotatePolicy ParseRotatePolicy(std::string_view value) {
+  if (value == "DAILY") {
+    return RotatePolicy::DAILY;
+  }
+  if (value == "SIZE") {
+    return RotatePolicy::SIZE;
+  }
+  return RotatePolicy::NONE;
+}
+
 struct QueConfig {
   constexpr static size_t kMaxBlockTimeout_us =
       std::chrono::microseconds::max().count();
@@ -126,6 +154,12 @@ public:
   static constexpr std::string_view kDefaultLogPath = "logfile.log";
   // 默认控制台缓冲区大小
   static constexpr size_t kDefaultConsoleBufferSize = 1024;
+  // 默认轮转策略
+  static constexpr RotatePolicy kDefaultRotatePolicy = RotatePolicy::NONE;
+  // 默认轮转大小（MB）
+  static constexpr size_t kDefaultRotateSizeMB = 1024;
+  // 默认最大轮转文件数
+  static constexpr size_t kDefaultMaxRotateFiles = 7;
   // 默认背压自旋次数
   static constexpr size_t kDefaultBackpressureSpinCount = 100;
   // 默认背压线程休眠时间
@@ -221,6 +255,22 @@ public:
         log_path_ = *value;
       }
     }
+    if (auto value =
+            helper["sink"]["file"]["rotate_policy"].value<std::string>()) {
+      STORE_RELAXED(rotate_policy_, ParseRotatePolicy(*value));
+    }
+    if (auto value =
+            helper["sink"]["file"]["rotate_size_mb"].value<int64_t>()) {
+      if (*value > 0) {
+        STORE_RELAXED(rotate_size_mb_, static_cast<size_t>(*value));
+      }
+    }
+    if (auto value =
+            helper["sink"]["file"]["max_rotate_files"].value<int64_t>()) {
+      if (*value >= 0) {
+        STORE_RELAXED(max_rotate_files_, static_cast<size_t>(*value));
+      }
+    }
     if (auto value = helper["sink"]["console"]["console_buffer_size_kb"]
                          .value<int64_t>()) {
       if (*value > 0) {
@@ -270,6 +320,9 @@ public:
     return LOAD_RELAXED(console_buffer_size_);
   }
   std::string_view GetLogPath() const { return log_path_; }
+  RotatePolicy GetRotatePolicy() const { return LOAD_RELAXED(rotate_policy_); }
+  size_t GetRotateSizeMB() const { return LOAD_RELAXED(rotate_size_mb_); }
+  size_t GetMaxRotateFiles() const { return LOAD_RELAXED(max_rotate_files_); }
 
   LogLevel GetLevel() const { return LOAD_RELAXED(level_); }
   std::string_view GetTimeFormat() const { return time_format_; }
@@ -326,6 +379,21 @@ public:
     return *this;
   }
 
+  LogConfig &SetRotatePolicy(RotatePolicy policy) {
+    STORE_RELAXED(rotate_policy_, policy);
+    return *this;
+  }
+
+  LogConfig &SetRotateSizeMB(size_t size_mb) {
+    STORE_RELAXED(rotate_size_mb_, size_mb);
+    return *this;
+  }
+
+  LogConfig &SetMaxRotateFiles(size_t max_files) {
+    STORE_RELAXED(max_rotate_files_, max_files);
+    return *this;
+  }
+
   LogConfig &SetReloadIntervalMs(size_t interval_ms) {
     STORE_RELAXED(reload_interval_ms_, interval_ms);
     return *this;
@@ -346,6 +414,9 @@ private:
     STORE_RELAXED(tls_buffer_count_, other.tls_buffer_count_);
     STORE_RELAXED(file_buffer_size_, other.file_buffer_size_);
     STORE_RELAXED(console_buffer_size_, other.console_buffer_size_);
+    STORE_RELAXED(rotate_policy_, other.rotate_policy_);
+    STORE_RELAXED(rotate_size_mb_, other.rotate_size_mb_);
+    STORE_RELAXED(max_rotate_files_, other.max_rotate_files_);
     STORE_RELAXED(reload_interval_ms_, other.reload_interval_ms_);
     STORE_RELAXED(worker_batch_size_, other.worker_batch_size_);
     STORE_RELAXED(queue_full_policy_, other.queue_full_policy_);
@@ -416,6 +487,12 @@ private:
   std::string log_path_{kDefaultLogPath};
   // 控制台缓冲区大小
   std::atomic<size_t> console_buffer_size_{kDefaultConsoleBufferSize};
+  // 文件轮转策略
+  std::atomic<RotatePolicy> rotate_policy_{kDefaultRotatePolicy};
+  // 文件轮转大小（MB）
+  std::atomic<size_t> rotate_size_mb_{kDefaultRotateSizeMB};
+  // 最大轮转文件数
+  std::atomic<size_t> max_rotate_files_{kDefaultMaxRotateFiles};
 
   // --------- 其他参数 -----------
   // 配置文件热加载间隔(ms)

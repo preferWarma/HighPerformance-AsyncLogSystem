@@ -1,5 +1,6 @@
-#include "Logger.h"
+#define LYF_INNER_LOG
 
+#include "Logger.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -141,6 +142,7 @@ static void InitLogger(const BenchmarkConfig &cfg) {
       .SetQueueBlockTimeoutUs(cfg.timeout_us)
       .SetBufferPoolSize(cfg.buffer_pool_size)
       .SetLevel(cfg.level)
+      .SetRotatePolicy(RotatePolicy::NONE)
       .SetLogPath(""); // 设置为空避免初始化时创建文件sink
   logger.Init(log_cfg);
   if (cfg.sink == "console") {
@@ -255,13 +257,13 @@ int main(int argc, char **argv) {
   uint64_t max_lat_ns = agg.max_ns;
 
   uint64_t drop_count = Logger::Instance().GetDropCount();
+  // 停止 Logger
+  Logger::Instance().Shutdown();
+
   uint64_t logfile_size_MB = 0;
   if (cfg.sink != "console") {
     logfile_size_MB = std::filesystem::file_size(cfg.log_file) / (1024 * 1024);
   }
-
-  // 停止 Logger
-  Logger::Instance().Shutdown();
 
   std::cout << "threads: " << cfg.thread_count << std::endl;
   std::cout << "logs: " << cfg.log_count << std::endl;
