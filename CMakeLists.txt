@@ -6,7 +6,7 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 set(CMAKE_CXX_STANDARD_REQUIRED ON) # C++标准要求
 set(CMAKE_CXX_STANDARD 20) # 设置C++标准版本
 
-# 启用 Address Sanitizer
+# # 启用 Address Sanitizer
 # option(ENABLE_ASAN "Enable Address Sanitizer" OFF)
 
 # if(ENABLE_ASAN)

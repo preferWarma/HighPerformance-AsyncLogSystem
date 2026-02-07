@@ -2,6 +2,7 @@
 
 #include "LogConfig.h"
 #include "Logger_impl.h"
+#include "sinks/FileSink.h"
 #include "tool/Singleton.h"
 #include <algorithm>
 #include <cstddef>

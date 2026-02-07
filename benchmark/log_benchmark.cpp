@@ -1,5 +1,5 @@
 #include "Logger.h"
-#include "Sink.h"
+#include "sinks/ISink.h"
 #include <algorithm>
 #include <benchmark/benchmark.h>
 #include <chrono>

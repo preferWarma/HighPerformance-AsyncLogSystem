@@ -1,7 +1,7 @@
 #pragma once
 #include "LogConfig.h"
 #include "LogQue.h"
-#include "Sink.h"
+#include "sinks/ISink.h"
 
 #ifdef __linux__
 #include <pthread.h>

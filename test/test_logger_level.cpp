@@ -1,5 +1,5 @@
 #include "Logger.h"
-#include "Sink.h"
+#include "sinks/ISink.h"
 #include <gtest/gtest.h>
 #include <mutex>
 #include <string>

@@ -1,6 +1,8 @@
 #define LYF_INNER_LOG
 
 #include "Logger.h"
+#include "sinks/ConsoleSink.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>

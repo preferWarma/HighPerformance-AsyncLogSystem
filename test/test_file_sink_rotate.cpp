@@ -1,7 +1,8 @@
 #include "LogConfig.h"
 #include "LogMessage.h"
-#include "Sink.h"
+#include "sinks/FileSink.h"
 #include "tool/Utility.h"
+
 #include <cstring>
 #include <filesystem>
 #include <fstream>

@@ -1,36 +1,13 @@
 #pragma once
-
-#include "LogConfig.h"
-#include "LogFormatter.h"
+#include "ISink.h"
 #include "tool/Utility.h"
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <string>
 #include <string_view>
-#include <unistd.h>
-#include <vector>
 
 namespace lyf {
-
-class ILogSink {
-public:
-  virtual ~ILogSink() = default;
-  virtual void Log(const LogMessage &msg) = 0;
-  virtual void Flush() = 0;
-  virtual void Sync() = 0;
-
-  virtual void ApplyConfig(const LogConfig &config) {
-    formatter_.SetConfig(&config);
-  }
-
-protected:
-  // 每个 Sink 拥有自己的 Formatter 和 暂存 Buffer
-  LogFormatter formatter_;
-  std::vector<char> buffer_;
-};
-
-// --- 文件 Sink 实现 ---
 class FileSink : public ILogSink {
 public:
   FileSink(std::string_view filepath) {
@@ -241,32 +218,4 @@ private:
                             1024};   // 轮转大小（Size 策略）
   std::time_t next_rotation_tp_ = 0; // 下一次轮转时间点（Daily策略）
 };
-
-// --- 控制台 Sink 实现 ---
-class ConsoleSink : public ILogSink {
-public:
-  ConsoleSink() { buffer_.reserve(LogConfig::kDefaultConsoleBufferSize); }
-  explicit ConsoleSink(const LogConfig &config) { ApplyConfig(config); }
-
-  void Log(const LogMessage &msg) override {
-    buffer_.clear();
-    formatter_.Format(msg, buffer_);
-    fwrite(buffer_.data(), 1, buffer_.size(), stdout);
-  }
-
-  void Flush() override { fflush(stdout); }
-  void Sync() override {
-#ifdef _WIN32
-    _commit(_fileno(stdout));
-#else
-    fsync(fileno(stdout));
-#endif
-  }
-
-  void ApplyConfig(const LogConfig &config) override {
-    formatter_.SetConfig(&config);
-    buffer_.reserve(config.GetConsoleBufferSize());
-  }
-};
-
 } // namespace lyf
