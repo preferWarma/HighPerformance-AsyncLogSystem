@@ -3,6 +3,7 @@
 #include "LogConfig.h"
 #include "LogFormatter.h"
 #include "tool/Utility.h"
+#include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <string>
@@ -76,7 +77,11 @@ public:
 
   void Sync() override {
     if (file_) {
+#ifdef _WIN32
+      _commit(_fileno(file_));
+#else
       fsync(fileno(file_));
+#endif
     }
   }
 
@@ -131,7 +136,11 @@ private:
   void UpdateNextRotationTime() {
     auto now = std::time(nullptr);
     std::tm tm_val{};
+#ifdef _WIN32
+    localtime_s(&tm_val, &now);
+#else
     localtime_r(&now, &tm_val);
+#endif
     // 设置为明天 00:00:00
     tm_val.tm_hour = 0;
     tm_val.tm_min = 0;
@@ -246,7 +255,13 @@ public:
   }
 
   void Flush() override { fflush(stdout); }
-  void Sync() override { fsync(fileno(stdout)); }
+  void Sync() override {
+#ifdef _WIN32
+    _commit(_fileno(stdout));
+#else
+    fsync(fileno(stdout));
+#endif
+  }
 
   void ApplyConfig(const LogConfig &config) override {
     formatter_.SetConfig(&config);
